@@ -41,7 +41,7 @@ const GameEngine = () => {
     let animationFrameId: number;
 
     const player = {
-      x: 50, y: 150, width: 40, height: 40, // Mantivemos o tamanho da Azeitona (40x40)
+      x: 50, y: 150, width: 20, height: 20, 
       velocity: 0, gravity: 0.4, jumpStrength: -7
     };
 
