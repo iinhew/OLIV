@@ -46,6 +46,7 @@ const GameEngine = () => {
   const [brandInputName, setBrandInputName] = useState('');
   const [drawColor, setDrawColor] = useState('#ffffff');
   const [baseColor, setBaseColor] = useState('#3b82f6');
+  const [isTransparentBg, setIsTransparentBg] = useState(false);
 
   const [pixelGrid, setPixelGrid] = useState<string[]>(Array(24 * 8).fill(''));
   const [isDrawing, setIsDrawing] = useState(false);
@@ -53,7 +54,7 @@ const GameEngine = () => {
   // --- NOVO: Efeitos para reajustar o tamanho ao mudar de tipo ---
   useEffect(() => {
     if (adType === 'obstacle') {
-      setAdRows(8); // Obstáculos sempre têm altura 8 para não quebrar a física do pulo
+      setAdRows(8); // Resetamos para 8, mas deixamos o usuário mexer até 16
       setAdCols(24);
     } else {
       setAdRows(20);
@@ -67,11 +68,14 @@ const GameEngine = () => {
     if (adType === 'parallax' && freeDrawCanvasRef.current) {
       const ctx = freeDrawCanvasRef.current.getContext('2d');
       if (ctx) {
-        ctx.fillStyle = baseColor;
-        ctx.fillRect(0, 0, adCols * 10, adRows * 10);
+        ctx.clearRect(0, 0, adCols * 10, adRows * 10);
+        if (!isTransparentBg) {
+          ctx.fillStyle = baseColor;
+          ctx.fillRect(0, 0, adCols * 10, adRows * 10);
+        }
       }
     }
-  }, [adCols, adRows, adType, baseColor]);
+  }, [adCols, adRows, adType, baseColor, isTransparentBg]);
   // ---------------------------------------------------------------
 
   const jumpSoundRef = useRef<HTMLAudioElement | null>(null);
@@ -99,11 +103,12 @@ const GameEngine = () => {
   }, []);
 
   const handleOpenStudio = (index: number) => {
-    if (purchasedBrandsRef.current.find(b => b.id === index)) return; 
-    if (pixelsRef.current < 50) { alert('Você precisa de 50 Pixels!'); return; }
-    
+    if (purchasedBrandsRef.current.find(b => b.id === index)) return;
+    if (pixelsRef.current < 64) { alert('Você precisa de pelo menos 64 Pixels para criar uma arte!'); return; }
+
     setActiveCellIndex(index);
     setBrandInputName('');
+    setIsTransparentBg(false);
     setAdType('obstacle'); // Garante que volta pro tipo plataforma
     setAdCols(24);         // Reseta o slider de largura
     setAdRows(8);          // Reseta o slider de altura
@@ -112,10 +117,20 @@ const GameEngine = () => {
   };
 
   const handleConfirmPurchase = async () => { // <-- Virou ASYNC
-    if (!brandInputName.trim() || activeCellIndex === null) return;
+    if (!brandInputName.trim()) {
+      alert("Por favor, digite um Nome para a sua Marca antes de comprar!");
+      return;
+    }
+    if (activeCellIndex === null) return;
+
+    const currentCost = adCols * adRows;
+    if (pixelsRef.current < currentCost) {
+      alert(`Você precisa de ${currentCost} Pixels para comprar esta marca!`);
+      return;
+    }
 
     // --- NOVO: Define qual dado salvar (Grid de Obstáculo ou Imagem Base64 do Fundo) ---
-    let finalPixelData = pixelGrid;
+    let finalPixelData = [`META:${adCols}:${adRows}`, ...pixelGrid];
     if (adType === 'parallax' && freeDrawCanvasRef.current) {
       const base64Image = freeDrawCanvasRef.current.toDataURL('image/png');
       finalPixelData = [base64Image]; // Salva a imagem livre no banco!
@@ -125,7 +140,7 @@ const GameEngine = () => {
     const newBrand = {
       id: activeCellIndex,
       name: brandInputName.substring(0, 10).toUpperCase(),
-      color: baseColor,
+      color: isTransparentBg ? 'transparent' : baseColor,
       pixel_data: finalPixelData // <-- Snake_case para o SQL (recebe o grid ou a imagem)
     };
 
@@ -136,7 +151,7 @@ const GameEngine = () => {
       alert("Erro ao salvar globalmente: " + error.message);
     } else {
       // SE DEU CERTO, aí sim desconta os pixels e atualiza a tela
-      pixelsRef.current -= 50;
+      pixelsRef.current -= currentCost;
       localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
       setDisplayPixels(pixelsRef.current);
 
@@ -180,10 +195,16 @@ const GameEngine = () => {
     const startX = Math.floor(x / pixelSize) * pixelSize;
     const startY = Math.floor(y / pixelSize) * pixelSize;
 
-    ctx.fillStyle = drawColor === '' ? baseColor : drawColor;
-
-    // Em vez de um círculo, desenha um quadrado perfeito na posição calculada
-    ctx.fillRect(startX, startY, pixelSize, pixelSize);
+    if (drawColor === '') {
+      ctx.clearRect(startX, startY, pixelSize, pixelSize);
+      if (!isTransparentBg) {
+        ctx.fillStyle = baseColor;
+        ctx.fillRect(startX, startY, pixelSize, pixelSize);
+      }
+    } else {
+      ctx.fillStyle = drawColor;
+      ctx.fillRect(startX, startY, pixelSize, pixelSize);
+    }
 
     // Desenha uma borda bem suave para dar aquele charme de "bloco"
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
@@ -195,11 +216,14 @@ const GameEngine = () => {
     if (adType === 'parallax' && freeDrawCanvasRef.current) {
       const ctx = freeDrawCanvasRef.current.getContext('2d');
       if (ctx && !isFreeDrawingRef.current) {
-        ctx.fillStyle = baseColor;
-        ctx.fillRect(0, 0, 300, 200);
+        ctx.clearRect(0, 0, 300, 200);
+        if (!isTransparentBg) {
+          ctx.fillStyle = baseColor;
+          ctx.fillRect(0, 0, 300, 200);
+        }
       }
     }
-  }, [baseColor, adType]);
+  }, [baseColor, adType, isTransparentBg]);
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
@@ -249,7 +273,7 @@ const GameEngine = () => {
 
     let obstacles: any[] = [];
     let particles: any[] = [];
-    let activeParallaxAds: any[] = []; 
+    let activeParallaxAds: any[] = [];
 
     // Mais estrelas para cobrir monitores grandes
     let parallaxLayers = [
@@ -500,16 +524,28 @@ const GameEngine = () => {
 
         // --- NOVO: Renderiza apenas plataformas físicas (exclui artes base64 de parallax) ---
         if (obs.isBrand && obs.pixel_data && obs.pixel_data.length > 1) {
-          ctx.fillStyle = obs.color;
-          ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+          if (obs.color !== 'transparent') {
+            ctx.fillStyle = obs.color;
+            ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+          }
+
+          let rows = 8;
+          let cols = obs.pixel_data.length / 8;
+          let pixels = obs.pixel_data;
+
+          if (pixels[0] && pixels[0].startsWith('META:')) {
+            const parts = pixels[0].split(':');
+            cols = parseInt(parts[1]);
+            rows = parseInt(parts[2]);
+            pixels = pixels.slice(1);
+          }
 
           // Renderização Quadrada Perfeita Dinâmica
-          const pSize = obs.height / 8; // Altura sempre dividida por 8 linhas lógicas
-          const dynamicCols = obs.pixel_data.length / 8; // Descobre a largura automaticamente
+          const pSize = obs.height / rows; // Altura dividida pelas linhas lógicas
 
-          for (let row = 0; row < 8; row++) {
-            for (let col = 0; col < dynamicCols; col++) {
-              const pColor = obs.pixel_data[row * dynamicCols + col];
+          for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+              const pColor = pixels[row * cols + col];
               if (pColor && pColor !== '') {
                 ctx.fillStyle = pColor;
                 ctx.fillRect(obs.x + col * pSize, obs.y + row * pSize, pSize, pSize);
@@ -517,8 +553,10 @@ const GameEngine = () => {
             }
           }
         } else {
-          ctx.fillStyle = obs.color;
-          ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+          if (obs.color !== 'transparent') {
+            ctx.fillStyle = obs.color;
+            ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+          }
         }
 
         if (obs.isBrand) {
@@ -553,15 +591,21 @@ const GameEngine = () => {
       // 8. Geração de novos obstáculos dinâmicos
       if (hasStarted && !isGameOver && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < canvas.width - 300)) {
         const isBrand = Math.random() > 0.6;
-        const brandHeight = 40;
 
         // Filtra só as marcas que SÃO plataformas físicas (array de pixels com mais de 1 elemento)
         const obstacleBrands = purchasedBrandsRef.current.filter(b => b.pixel_data && b.pixel_data.length > 1);
         const brand = isBrand && obstacleBrands.length > 0 ? obstacleBrands[Math.floor(Math.random() * obstacleBrands.length)] : null;
 
-        // Calcula a largura matematicamente para que os pixels fiquem perfeitamente quadrados
-        const cols = brand?.pixel_data ? brand.pixel_data.length / 8 : 24;
-        const brandWidth = brand ? (brandHeight / 8) * cols : 20;
+        let rows = 8;
+        let cols = brand?.pixel_data ? brand.pixel_data.length / 8 : 24;
+        if (brand?.pixel_data && brand.pixel_data[0] && brand.pixel_data[0].startsWith('META:')) {
+          const parts = brand.pixel_data[0].split(':');
+          cols = parseInt(parts[1]);
+          rows = parseInt(parts[2]);
+        }
+
+        const brandHeight = brand ? rows * 5 : 40;
+        const brandWidth = brand ? (brandHeight / rows) * cols : 20;
 
         const yPos = brand
           ? Math.random() * (canvas.height - brandHeight - 40) + 40
@@ -629,7 +673,7 @@ const GameEngine = () => {
             </div>
             <div className="text-right">
               <p className="text-gray-400 text-xs">Custo por Espaço</p>
-              <p className="text-blue-400 font-bold text-xl">50 Pixels</p>
+              <p className="text-blue-400 font-bold text-xl">1 Px / bloco</p>
             </div>
           </div>
 
@@ -643,23 +687,34 @@ const GameEngine = () => {
                   key={i}
                   onClick={() => handleOpenStudio(i)}
                   className={`aspect-square rounded-sm cursor-pointer transition-all ${brand ? 'scale-95 border border-black/20' : 'bg-gray-800 hover:bg-gray-700'}`}
-                  style={brand ? { backgroundColor: brand.color } : {}}
-                  title={brand ? `Marca: ${brand.name}` : 'Criar minha arte aqui (50 Px)'}
+                  style={brand ? { backgroundColor: brand.color === 'transparent' ? '#1f2937' : brand.color } : {}}
+                  title={brand ? `Marca: ${brand.name}` : 'Criar minha arte aqui'}
                 >
-                  {brand && brand.pixelData && !isParallax && (
-                    // Renderiza a miniatura com a LARGURA DINÂMICA que veio do banco
-                    <div
-                      className="w-full h-full grid pointer-events-none opacity-90"
-                      style={{
-                        gridTemplateColumns: `repeat(${brand.pixelData.length / 8}, minmax(0, 1fr))`,
-                        gridTemplateRows: `repeat(8, minmax(0, 1fr))`
-                      }}
-                    >
-                      {brand.pixelData.map((color, idx) => (
-                        <div key={idx} style={{ backgroundColor: color || 'transparent' }} />
-                      ))}
-                    </div>
-                  )}
+                  {brand && brand.pixelData && !isParallax && (() => {
+                    const data = brand.pixelData || [];
+                    let rows = 8;
+                    let cols = data.length / 8;
+                    let pixels = data;
+                    if (data[0] && data[0].startsWith('META:')) {
+                      const parts = data[0].split(':');
+                      cols = parseInt(parts[1]);
+                      rows = parseInt(parts[2]);
+                      pixels = data.slice(1);
+                    }
+                    return (
+                      <div
+                        className="w-full h-full grid pointer-events-none opacity-90"
+                        style={{
+                          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                          gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`
+                        }}
+                      >
+                        {pixels.map((color, idx) => (
+                          <div key={idx} style={{ backgroundColor: color || 'transparent' }} />
+                        ))}
+                      </div>
+                    )
+                  })()}
                   {brand && brand.pixelData && isParallax && (
                     // Renderiza a miniatura da imagem livre
                     <img src={brand.pixelData[0]} alt="Arte" className="w-full h-full object-cover opacity-90" />
@@ -706,8 +761,20 @@ const GameEngine = () => {
 
             <div className="flex gap-4">
               <div className="flex flex-col gap-2 w-1/2">
-                <label className="text-gray-400 text-xs">Cor de Fundo do Bloco</label>
-                <input type="color" value={baseColor} onChange={(e) => setBaseColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
+                <div className="flex justify-between items-center">
+                  <label className="text-gray-400 text-xs">Cor de Fundo</label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input type="checkbox" checked={isTransparentBg} onChange={(e) => setIsTransparentBg(e.target.checked)} className="accent-blue-500" />
+                    <span className="text-[10px] text-gray-400">Transp.</span>
+                  </label>
+                </div>
+                {!isTransparentBg ? (
+                  <input type="color" value={baseColor} onChange={(e) => setBaseColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
+                ) : (
+                  <div className="w-full h-10 rounded border border-gray-600 bg-[#1f2937] relative overflow-hidden">
+                    <div className="absolute inset-0 opacity-50" style={{ backgroundImage: 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' }} />
+                  </div>
+                )}
               </div>
               <div className="flex flex-col gap-2 w-1/2">
                 <label className="text-gray-400 text-xs">Cor do Pincel</label>
@@ -739,15 +806,13 @@ const GameEngine = () => {
                   <input type="range" min="8" max="64" value={adCols} onChange={(e) => setAdCols(parseInt(e.target.value))} className="w-full accent-blue-500" />
                 </div>
 
-                {adType === 'parallax' && (
-                  <div className="flex flex-col gap-1">
-                    <div className="flex justify-between text-xs text-gray-400">
-                      <span>Altura (Pixels)</span>
-                      <span className="font-bold text-white">{adRows}px</span>
-                    </div>
-                    <input type="range" min="8" max="40" value={adRows} onChange={(e) => setAdRows(parseInt(e.target.value))} className="w-full accent-purple-500" />
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between text-xs text-gray-400">
+                    <span>Altura (Pixels)</span>
+                    <span className="font-bold text-white">{adRows}px</span>
                   </div>
-                )}
+                  <input type="range" min="8" max={adType === 'obstacle' ? 16 : 40} value={adRows} onChange={(e) => setAdRows(parseInt(e.target.value))} className={`w-full ${adType === 'obstacle' ? 'accent-blue-500' : 'accent-purple-500'}`} />
+                </div>
               </div>
 
               {/* Mini Janela de Prévia */}
@@ -773,7 +838,8 @@ const GameEngine = () => {
                 <div
                   className="grid w-full h-[120px] cursor-crosshair touch-none shrink-0"
                   style={{
-                    backgroundColor: baseColor,
+                    backgroundColor: isTransparentBg ? '#1f2937' : baseColor,
+                    backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
                     gridTemplateColumns: `repeat(${adCols}, minmax(0, 1fr))`,
                     gridTemplateRows: `repeat(${adRows}, minmax(0, 1fr))`
                   }}
@@ -805,7 +871,11 @@ const GameEngine = () => {
                 <canvas
                   ref={freeDrawCanvasRef}
                   width={adCols * 10} height={adRows * 10}
-                  className="w-full max-h-[200px] cursor-crosshair touch-none object-contain bg-black shadow-inner"
+                  className="w-full max-h-[200px] cursor-crosshair touch-none object-contain shadow-inner"
+                  style={{
+                    backgroundColor: isTransparentBg ? '#1f2937' : 'black',
+                    backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
+                  }}
                   onMouseDown={(e) => { isFreeDrawingRef.current = true; drawFreehand(e); }}
                   onMouseMove={(e) => drawFreehand(e)}
                   onMouseUp={() => isFreeDrawingRef.current = false}
@@ -824,7 +894,7 @@ const GameEngine = () => {
             <div className="flex justify-between gap-4 mt-2">
               <button onClick={() => setBuyModalOpen(false)} className="w-1/2 py-2 text-gray-300 hover:text-white border border-gray-600 rounded">Cancelar</button>
               <button onClick={handleConfirmPurchase} className={`w-1/2 py-2 text-white font-bold rounded shadow-lg ${adType === 'parallax' ? 'bg-purple-600 hover:bg-purple-500 shadow-purple-500/30' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'}`}>
-                Comprar (50 Px)
+                Comprar ({adCols * adRows} Px)
               </button>
             </div>
           </div>
