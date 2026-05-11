@@ -6,7 +6,8 @@ interface CustomBrand {
   id: number;
   name: string;
   color: string;
-  pixelData: string[];
+  pixel_data: string[]; // <-- Atualizado para o banco de dados
+  pixelData?: string[]; // <-- Deixamos como opcional para não quebrar nenhuma leitura antiga
 }
 
 const GameEngine = () => {
