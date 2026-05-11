@@ -278,6 +278,9 @@ const GameEngine = () => {
         canvas.width = container.clientWidth;
         canvas.height = container.clientHeight;
 
+        // Ajuste dinâmico da posição X do jogador para Mobile vs Desktop
+        player.x = Math.min(GAME_CONSTANTS.PLAYER_START_X, canvas.width * 0.25);
+
         // Impede que o jogador fique preso embaixo da tela ao redimensionar
         if (player.y + player.height > canvas.height) {
           player.y = canvas.height - player.height;
