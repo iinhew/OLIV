@@ -1,6 +1,11 @@
 'use client';
 import React, { useRef, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase'; // <-- NOVA LINHA
+import { GAME_CONSTANTS } from '../lib/game-engine/constants';
+import { ParticlePool } from '../lib/game-engine/particlePool';
+import { gameAudio } from '../lib/game-engine/audioManager';
+import { RendererUtils } from '../lib/game-engine/rendererUtils';
+import { PhysicsEngine } from '../lib/game-engine/physics';
 
 interface CustomBrand {
   id: number;
@@ -78,13 +83,12 @@ const GameEngine = () => {
   }, [adCols, adRows, adType, baseColor, isTransparentBg]);
   // ---------------------------------------------------------------
 
-  const jumpSoundRef = useRef<HTMLAudioElement | null>(null);
-  const coinSoundRef = useRef<HTMLAudioElement | null>(null);
-  const deathSoundRef = useRef<HTMLAudioElement | null>(null);
-  const pauseSoundRef = useRef<HTMLAudioElement | null>(null);
+
 
   const oliveImageRef = useRef<HTMLImageElement | null>(null);
   const crownImageRef = useRef<HTMLImageElement | null>(null);
+  const coinImageRef = useRef<HTMLImageElement | null>(null);
+  const magnetImageRef = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
     // Pixels e Highscore continuam locais (o dinheiro ainda é seu)
@@ -130,7 +134,7 @@ const GameEngine = () => {
     }
 
     // --- NOVO: Define qual dado salvar (Grid de Obstáculo ou Imagem Base64 do Fundo) ---
-    let finalPixelData = [`META:${adCols}:${adRows}`, ...pixelGrid];
+    let finalPixelData = [`META:${adCols}:${adRows}:0:0`, ...pixelGrid];
     if (adType === 'parallax' && freeDrawCanvasRef.current) {
       const base64Image = freeDrawCanvasRef.current.toDataURL('image/png');
       finalPixelData = [base64Image]; // Salva a imagem livre no banco!
@@ -227,10 +231,11 @@ const GameEngine = () => {
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    jumpSoundRef.current = new Audio('/sounds/pop.wav');
-    coinSoundRef.current = new Audio('/sounds/coin.wav');
-    deathSoundRef.current = new Audio('/sounds/death.wav');
-    pauseSoundRef.current = new Audio('/sounds/pause.wav');
+    gameAudio.loadSound('jump', '/sounds/pop.wav');
+    gameAudio.loadSound('coin', '/sounds/coin.wav');
+    gameAudio.loadSound('death', '/sounds/death.wav');
+    gameAudio.loadSound('pause', '/sounds/pause.wav');
+    gameAudio.loadSound('break', '/sounds/break.wav');
 
     const oliveImg = new Image();
     oliveImg.src = '/images/olive.png';
@@ -239,6 +244,14 @@ const GameEngine = () => {
     const crownImg = new Image();
     crownImg.src = '/images/crown.png';
     crownImageRef.current = crownImg;
+
+    const coinImg = new Image();
+    coinImg.src = '/images/coin.png';
+    coinImageRef.current = coinImg;
+
+    const magnetImg = new Image();
+    magnetImg.src = '/images/ima.png';
+    magnetImageRef.current = magnetImg;
 
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -250,8 +263,13 @@ const GameEngine = () => {
     let animationFrameId: number;
 
     const player = {
-      x: 100, y: 150, width: 20, height: 20,
-      velocity: 0, gravity: 0.4, jumpStrength: -7
+      x: GAME_CONSTANTS.PLAYER_START_X,
+      y: GAME_CONSTANTS.PLAYER_START_Y,
+      width: GAME_CONSTANTS.PLAYER_WIDTH,
+      height: GAME_CONSTANTS.PLAYER_HEIGHT,
+      velocity: 0,
+      gravity: GAME_CONSTANTS.GRAVITY,
+      jumpStrength: GAME_CONSTANTS.JUMP_STRENGTH
     };
 
     // --- LÓGICA DE CANVAS DINÂMICO ---
@@ -272,7 +290,7 @@ const GameEngine = () => {
     // ---------------------------------
 
     let obstacles: any[] = [];
-    let particles: any[] = [];
+    const particlePool = new ParticlePool(200);
     let activeParallaxAds: any[] = [];
 
     // Mais estrelas para cobrir monitores grandes
@@ -286,24 +304,21 @@ const GameEngine = () => {
     let isPaused = false;
     let score = 0;
     let shakeFrames = 0;
-    let gameSpeed = 3;
+    let gameSpeed = GAME_CONSTANTS.INITIAL_GAME_SPEED;
     let hasBeatenHighScore = false;
+    let magnetActiveUntil = 0;
+    let countdownUntil = 0;
 
     let currentHighScore = parseInt(localStorage.getItem('pixelArenaHighScore') || '0');
     setGameState(prev => ({ ...prev, highScore: currentHighScore }));
 
-    const playSound = (audioRef: React.MutableRefObject<HTMLAudioElement | null>) => {
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.play().catch(() => { });
-      }
-    };
+
 
     const triggerGameOver = () => {
       isGameOver = true;
       shakeFrames = 15;
       hasBeatenHighScore = false;
-      playSound(deathSoundRef);
+      gameAudio.play('death');
 
       if (Math.floor(score) > currentHighScore) {
         currentHighScore = Math.floor(score);
@@ -321,15 +336,15 @@ const GameEngine = () => {
       if (isPaused || view === 'canvas') return;
 
       if (!hasStarted) {
-        hasStarted = true;
-        setGameState(prev => ({ ...prev, hasStarted: true }));
-        player.velocity = player.jumpStrength;
-        playSound(jumpSoundRef);
+        if (countdownUntil === 0) {
+          countdownUntil = Date.now() + 3000;
+          setGameState(prev => ({ ...prev, hasStarted: true }));
+        }
       } else if (isGameOver) {
         player.y = Math.min(150, canvas.height / 2);
         player.velocity = 0;
         obstacles = [];
-        particles = [];
+        particlePool.clear();
         activeParallaxAds = [];
         isGameOver = false;
         hasStarted = false;
@@ -337,25 +352,34 @@ const GameEngine = () => {
         shakeFrames = 0;
         gameSpeed = 3;
         hasBeatenHighScore = false;
-        setGameState(prev => ({ ...prev, gameOver: false, hasStarted: false, score: 0 }));
+        countdownUntil = Date.now() + 3000;
+        setGameState(prev => ({ ...prev, gameOver: false, hasStarted: true, score: 0 }));
         render();
       } else {
+        if (countdownUntil > Date.now()) return;
         player.velocity = player.jumpStrength;
-        playSound(jumpSoundRef);
+        gameAudio.play('jump');
         for (let i = 0; i < 5; i++) {
-          particles.push({
-            x: player.x + player.width / 2, y: player.y + player.height,
-            vx: (Math.random() - 0.5) * 2, vy: Math.random() * 2, life: 1.0
-          });
+          particlePool.spawn(
+            player.x + player.width / 2, player.y + player.height,
+            (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false
+          );
         }
       }
     };
 
     const handleTogglePause = () => {
       if (hasStarted && !isGameOver && view === 'game') {
-        isPaused = !isPaused;
-        playSound(pauseSoundRef);
-        setGameState(prev => ({ ...prev, isPaused }));
+        if (isPaused) {
+          isPaused = false;
+          countdownUntil = Date.now() + 3000;
+          gameAudio.play('pause');
+          setGameState(prev => ({ ...prev, isPaused: false }));
+        } else {
+          isPaused = true;
+          gameAudio.play('pause');
+          setGameState(prev => ({ ...prev, isPaused: true }));
+        }
       }
     };
 
@@ -370,12 +394,7 @@ const GameEngine = () => {
     const externalPauseListener = () => handleTogglePause();
     window.addEventListener('toggleExternalPause', externalPauseListener);
 
-    const checkCollision = (rect1: any, rect2: any) => {
-      return (
-        rect1.x < rect2.x + rect2.width && rect1.x + rect1.width > rect2.x &&
-        rect1.y < rect2.y + rect2.height && rect1.height + rect1.y > rect2.y
-      );
-    };
+
 
     const render = () => {
       if (isGameOver && shakeFrames <= 0) return;
@@ -383,6 +402,23 @@ const GameEngine = () => {
         animationFrameId = window.requestAnimationFrame(render);
         return;
       }
+
+      let isCountingDown = false;
+      let countdownSecs = 0;
+      if (countdownUntil > Date.now()) {
+        isCountingDown = true;
+        countdownSecs = Math.ceil((countdownUntil - Date.now()) / 1000);
+      } else if (countdownUntil > 0) {
+        countdownUntil = 0;
+        if (!hasStarted) {
+          hasStarted = true;
+          setGameState(prev => ({ ...prev, hasStarted: true }));
+          player.velocity = player.jumpStrength;
+          gameAudio.play('jump');
+        }
+      }
+
+      const isPhysicsActive = hasStarted && !isGameOver && !isCountingDown;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.save();
@@ -395,7 +431,7 @@ const GameEngine = () => {
       // 1. Renderiza o fundo de estrelas (Parallax Base)
       parallaxLayers.forEach(layer => {
         layer.stars.forEach(star => {
-          if (hasStarted && !isGameOver) star.x -= gameSpeed * layer.speed;
+          if (isPhysicsActive) star.x -= gameSpeed * layer.speed;
           if (star.x < 0) { star.x = canvas.width; star.y = Math.random() * canvas.height; }
           ctx.fillStyle = layer.color;
           ctx.fillRect(star.x, star.y, star.size, star.size);
@@ -403,7 +439,7 @@ const GameEngine = () => {
       });
 
       // 2. Lógica de Física e Geração de Artes de Fundo (Parallax Ads)
-      if (hasStarted && !isGameOver) {
+      if (isPhysicsActive) {
         player.velocity += player.gravity;
         player.y += player.velocity;
         score += 0.05;
@@ -415,11 +451,11 @@ const GameEngine = () => {
         if (Math.floor(score) > currentHighScore && currentHighScore > 0 && !hasBeatenHighScore) {
           hasBeatenHighScore = true;
           for (let i = 0; i < 30; i++) {
-            particles.push({
-              x: player.x + player.width / 2, y: player.y,
-              vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 1) * 7,
-              life: 1.5, isGlitter: true
-            });
+            particlePool.spawn(
+              player.x + player.width / 2, player.y,
+              (Math.random() - 0.5) * 6, (Math.random() - 1) * 7,
+              1.5, true
+            );
           }
         }
 
@@ -448,7 +484,7 @@ const GameEngine = () => {
       // 3. Renderiza as Artes Livres (Parallax) ATRÁS dos obstáculos
       for (let i = activeParallaxAds.length - 1; i >= 0; i--) {
         let ad = activeParallaxAds[i];
-        if (hasStarted && !isGameOver) ad.x -= ad.speed;
+        if (isPhysicsActive) ad.x -= ad.speed;
 
         if (ad.img && ad.img.complete) {
           ctx.globalAlpha = Math.min(ad.alpha, 1);
@@ -506,24 +542,48 @@ const GameEngine = () => {
       }
 
       // 6. Renderização de Partículas
-      for (let i = particles.length - 1; i >= 0; i--) {
-        let p = particles[i];
-        p.x += p.vx; p.y += p.vy; p.life -= 0.05;
-        if (p.life <= 0) {
-          particles.splice(i, 1);
-        } else {
-          ctx.fillStyle = p.isGlitter ? `rgba(255, 223, 0, ${p.life})` : `rgba(255, 255, 255, ${p.life})`;
-          ctx.fillRect(p.x, p.y, 4, 4);
-        }
-      }
+      // 6. Atualização e Renderização das Partículas
+      particlePool.updateAndDraw(ctx);
 
       // 7. Renderização dos Obstáculos Físicos
       for (let i = obstacles.length - 1; i >= 0; i--) {
         let obs = obstacles[i];
-        if (hasStarted && !isGameOver) obs.x -= gameSpeed;
+        if (isPhysicsActive) {
+          if (!obs.isBrand && !obs.isTrampoline && Date.now() < magnetActiveUntil) {
+            const dx = (player.x + player.width / 2) - (obs.x + obs.width / 2);
+            const dy = (renderY + player.height / 2) - (obs.y + obs.height / 2);
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 400) {
+              obs.x += (dx / dist) * 12;
+              obs.y += (dy / dist) * 12;
+            } else {
+              obs.x -= gameSpeed;
+            }
+          } else {
+            obs.x -= gameSpeed;
+          }
+        }
 
         // --- NOVO: Renderiza apenas plataformas físicas (exclui artes base64 de parallax) ---
         if (obs.isBrand && obs.pixel_data && obs.pixel_data.length > 1) {
+          if (obs.isBreaking) {
+            if (Date.now() > obs.breakTimer) {
+              gameAudio.play('break');
+              for (let j = 0; j < 30; j++) {
+                particlePool.spawn(
+                  obs.x + Math.random() * obs.width,
+                  obs.y + Math.random() * obs.height,
+                  (Math.random() - 0.5) * 8,
+                  (Math.random() - 0.5) * 8,
+                  1.0,
+                  false
+                );
+              }
+              obstacles.splice(i, 1);
+              continue;
+            }
+          }
+
           if (obs.color !== 'transparent') {
             ctx.fillStyle = obs.color;
             ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
@@ -552,10 +612,84 @@ const GameEngine = () => {
               }
             }
           }
+
+          if (obs.isBreaking && Math.floor(Date.now() / 100) % 2 === 0) {
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+            ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+          }
         } else {
-          if (obs.color !== 'transparent') {
+          if (obs.isTrampoline) {
+            ctx.shadowColor = '#10b981';
+            ctx.shadowBlur = 15;
             ctx.fillStyle = obs.color;
             ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+            ctx.fillStyle = '#059669';
+            ctx.fillRect(obs.x, obs.y + 4, obs.width, 2);
+            ctx.shadowBlur = 0;
+          } else {
+            const imgRef = obs.isMagnet ? magnetImageRef : coinImageRef;
+            if (imgRef.current && imgRef.current.complete) {
+              let sourceX = 0, sourceY = 0, sourceSizeX = 0, sourceSizeY = 0;
+              let destX = obs.x - 5;
+              let destY = obs.y - 5;
+              let destW = obs.width + 10;
+              let destH = obs.height + 10;
+
+              if (obs.isMagnet) {
+                const totalFrames = 24;
+                const currentFrame = Math.floor(Date.now() / 60) % totalFrames;
+                const cols = 8;
+                const rows = 3;
+                const col = currentFrame % cols;
+                const row = Math.floor(currentFrame / cols);
+
+                const rawWidth = imgRef.current.width / cols;
+                const rawHeight = imgRef.current.height / rows;
+
+                sourceSizeX = Math.floor(rawWidth);
+                sourceSizeY = Math.floor(rawHeight);
+                sourceX = Math.floor(col * rawWidth);
+                sourceY = Math.floor(row * rawHeight);
+
+                ctx.shadowColor = '#3b82f6';
+                ctx.shadowBlur = 15;
+
+                // Aumentando o tamanho do íma na tela (apenas visual, a hitbox continua a mesma)
+                destW = 45; // de 30 para 45
+                destH = destW * (sourceSizeY / sourceSizeX); // Mantém a proporção real da arte
+                destX = obs.x + (obs.width / 2) - (destW / 2);
+                destY = obs.y + (obs.height / 2) - (destH / 2);
+
+              } else {
+                const totalFrames = 8;
+                const currentFrame = Math.floor(Date.now() / 100) % totalFrames;
+                const col = currentFrame % 4;
+                const row = Math.floor(currentFrame / 4);
+                const centersX = [366, 665, 941, 1217];
+                const centersY = [333, 722];
+                const size = 250;
+                sourceX = centersX[col] - (size / 2);
+                sourceY = centersY[row] - (size / 2);
+                sourceSizeX = size;
+                sourceSizeY = size;
+
+                ctx.shadowColor = '#fbbf24';
+                ctx.shadowBlur = 15;
+              }
+
+              ctx.drawImage(
+                imgRef.current,
+                sourceX, sourceY, sourceSizeX, sourceSizeY,
+                destX, destY, destW, destH
+              );
+
+              ctx.shadowBlur = 0;
+            } else {
+              if (obs.color !== 'transparent') {
+                ctx.fillStyle = obs.color;
+                ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+              }
+            }
           }
         }
 
@@ -566,19 +700,52 @@ const GameEngine = () => {
         }
 
         // Colisão
-        if (hasStarted && !isGameOver && checkCollision({ x: player.x, y: renderY, width: player.width, height: player.height }, obs)) {
+        if (isPhysicsActive && PhysicsEngine.checkCollision({ x: player.x, y: renderY, width: player.width, height: player.height }, obs)) {
           if (obs.isBrand) {
             if (player.velocity > 0 && player.y + player.height - player.velocity <= obs.y + 10) {
               player.y = obs.y - player.height;
               player.velocity = 0;
-            } else triggerGameOver();
+
+              if (obs.isBouncy) {
+                player.velocity = player.jumpStrength * 2.0;
+                gameAudio.play('jump');
+              }
+
+              if (obs.isBreakable && !obs.isBreaking) {
+                obs.isBreaking = true;
+                obs.breakTimer = Date.now() + 500;
+              }
+            } else {
+              if (!obs.isBouncy) {
+                triggerGameOver();
+              }
+            }
+          } else if (obs.isTrampoline) {
+            if (player.velocity > 0 && player.y + player.height - player.velocity <= obs.y + 10) {
+              player.y = obs.y - player.height;
+              player.velocity = player.jumpStrength * 2.0;
+              gameAudio.play('jump');
+            }
           } else {
-            playSound(coinSoundRef);
+            gameAudio.play('coin');
             obstacles.splice(i, 1);
-            pixelsRef.current += 1;
-            localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
-            if (pixelsRef.current % 5 === 0) setDisplayPixels(pixelsRef.current);
-            score += 20;
+
+            for (let j = 0; j < 10; j++) {
+              particlePool.spawn(
+                obs.x + obs.width / 2, obs.y + obs.height / 2,
+                (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6,
+                1.0, true
+              );
+            }
+
+            if (obs.isMagnet) {
+              magnetActiveUntil = Date.now() + 10000;
+            } else {
+              pixelsRef.current += 1;
+              localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+              if (pixelsRef.current % 5 === 0) setDisplayPixels(pixelsRef.current);
+              score += 20;
+            }
             continue;
           }
         }
@@ -589,7 +756,7 @@ const GameEngine = () => {
       }
 
       // 8. Geração de novos obstáculos dinâmicos
-      if (hasStarted && !isGameOver && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < canvas.width - 300)) {
+      if (isPhysicsActive && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < canvas.width - 300)) {
         const isBrand = Math.random() > 0.6;
 
         // Filtra só as marcas que SÃO plataformas físicas (array de pixels com mais de 1 elemento)
@@ -598,10 +765,15 @@ const GameEngine = () => {
 
         let rows = 8;
         let cols = brand?.pixel_data ? brand.pixel_data.length / 8 : 24;
+        let isBreakable = false;
+        let isBouncy = false;
         if (brand?.pixel_data && brand.pixel_data[0] && brand.pixel_data[0].startsWith('META:')) {
           const parts = brand.pixel_data[0].split(':');
           cols = parseInt(parts[1]);
           rows = parseInt(parts[2]);
+
+          isBreakable = Math.random() < 0.15;
+          isBouncy = !isBreakable && Math.random() < 0.15;
         }
 
         const brandHeight = brand ? rows * 5 : 40;
@@ -619,8 +791,34 @@ const GameEngine = () => {
           color: brand ? brand.color : '#f59e0b',
           isBrand: !!brand,
           name: brand?.name || 'MOEDA',
-          pixel_data: brand?.pixel_data
+          pixel_data: brand?.pixel_data,
+          isMagnet: !brand && Math.random() < 0.1, // 10% chance
+          isBreakable: isBreakable,
+          isBouncy: isBouncy
         });
+
+        if (brand && Math.random() < 0.15) {
+          obstacles.push({
+            x: canvas.width + 100 + Math.random() * (brandWidth - 20),
+            y: yPos - 10,
+            width: 20,
+            height: 10,
+            color: '#10b981',
+            isBrand: false,
+            isTrampoline: true,
+            name: 'TRAMPOLIM'
+          });
+        }
+      }
+
+      if (isCountingDown) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 80px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(countdownSecs.toString(), canvas.width / 2, canvas.height / 2);
       }
 
       ctx.restore();
@@ -680,18 +878,18 @@ const GameEngine = () => {
           <div className="w-full max-w-[600px] grid grid-cols-10 gap-1 bg-gray-950 p-2 border border-gray-700 rounded-lg shadow-xl relative">
             {Array.from({ length: 50 }).map((_, i) => {
               const brand = brandsUI.find(b => b.id === i);
-              const isParallax = brand?.pixelData?.length === 1; // Verifica se é arte livre
+              const data = brand?.pixel_data || brand?.pixelData;
+              const isParallax = data?.length === 1; // Verifica se é arte livre
 
               return (
                 <div
                   key={i}
                   onClick={() => handleOpenStudio(i)}
-                  className={`aspect-square rounded-sm cursor-pointer transition-all ${brand ? 'scale-95 border border-black/20' : 'bg-gray-800 hover:bg-gray-700'}`}
+                  className={`aspect-square rounded-sm cursor-pointer transition-all flex items-center justify-center overflow-hidden ${brand ? 'scale-95 border border-black/20' : 'bg-gray-800 hover:bg-gray-700'}`}
                   style={brand ? { backgroundColor: brand.color === 'transparent' ? '#1f2937' : brand.color } : {}}
                   title={brand ? `Marca: ${brand.name}` : 'Criar minha arte aqui'}
                 >
-                  {brand && brand.pixelData && !isParallax && (() => {
-                    const data = brand.pixelData || [];
+                  {brand && data && !isParallax && (() => {
                     let rows = 8;
                     let cols = data.length / 8;
                     let pixels = data;
@@ -715,9 +913,9 @@ const GameEngine = () => {
                       </div>
                     )
                   })()}
-                  {brand && brand.pixelData && isParallax && (
+                  {brand && data && isParallax && (
                     // Renderiza a miniatura da imagem livre
-                    <img src={brand.pixelData[0]} alt="Arte" className="w-full h-full object-cover opacity-90" />
+                    <img src={data[0]} alt="Arte" className="w-full h-full object-cover opacity-90" />
                   )}
                 </div>
               );
@@ -781,6 +979,8 @@ const GameEngine = () => {
                 <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
               </div>
             </div>
+
+
 
             <div className="flex justify-between items-center bg-gray-800 p-2 rounded">
               <div className="flex gap-2">
@@ -919,53 +1119,115 @@ const GameEngine = () => {
           </div>
         </div>
 
-        <div ref={containerRef} className="flex-1 w-full relative overflow-hidden bg-[#0f172a]">
-          <canvas
-            ref={canvasRef}
-            className="absolute inset-0 block touch-none select-none z-0"
-          />
+        <style>{`
+          @keyframes vhs-flicker {
+            0% { opacity: 0.98; }
+            5% { opacity: 0.90; }
+            10% { opacity: 0.98; }
+            15% { opacity: 1; }
+            100% { opacity: 1; }
+          }
+          @keyframes vhs-glitch {
+            0% { transform: translate(0); filter: hue-rotate(0deg); }
+            1% { transform: translate(-4px, 1px); filter: hue-rotate(90deg); }
+            2% { transform: translate(4px, -1px); filter: hue-rotate(-90deg); }
+            3% { transform: translate(0); filter: hue-rotate(0deg); }
+            49% { transform: translate(0); }
+            50% { transform: translate(1px, 2px) skewX(1deg); }
+            51% { transform: translate(0); }
+            98% { transform: translate(0); }
+            99% { transform: translate(-2px, -2px) skewX(-1deg); }
+            100% { transform: translate(0); }
+          }
+          @keyframes scanline-scroll {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100vh); }
+          }
+          .crt-container {
+            animation: vhs-flicker 0.15s infinite;
+            border-radius: 25px;
+            box-shadow: inset 0 0 60px rgba(0,0,0,0.9), inset 0 0 20px rgba(0,0,0,1);
+            transform: perspective(600px) rotateX(1deg);
+          }
+          @media (min-width: 768px) {
+            .crt-container { border-radius: 50px; }
+          }
+          .crt-glitch-layer {
+            animation: vhs-glitch 5s infinite;
+            width: 100%;
+            height: 100%;
+          }
+          .crt-scanlines {
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.35));
+            background-size: 100% 4px;
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 21;
+          }
+          .crt-moving-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 30px;
+            background: rgba(255,255,255,0.03);
+            pointer-events: none;
+            z-index: 22;
+            animation: scanline-scroll 8s linear infinite;
+          }
+          .crt-vignette {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 23;
+            background: radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.85) 90%, rgba(0,0,0,1) 100%);
+          }
+          .crt-aberration {
+            filter: contrast(1.25) saturate(1.3) brightness(1.1) sepia(0.15) hue-rotate(-5deg);
+          }
+        `}</style>
 
-          <div
-            className="absolute inset-0 pointer-events-none z-20 overflow-hidden"
-            style={{
-              background: 'radial-gradient(circle, rgba(0,0,0,0) 60%, rgba(0,0,0,0.7) 100%)',
-            }}
-          >
-            <div
-              className="absolute inset-0 opacity-[0.15]"
-              style={{
-                backgroundImage: 'linear-gradient(rgba(0, 0, 0, 0.9) 50%, transparent 50%)',
-                backgroundSize: '100% 4px',
-              }}
-            />
+        <div className="flex-1 w-full p-2 md:p-6 flex flex-col relative bg-black items-center justify-center">
+          <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-[#0f172a] crt-container shadow-[0_0_50px_rgba(59,130,246,0.15)] border-2 border-gray-900">
+            <div className="crt-glitch-layer absolute inset-0">
+              <canvas
+                ref={canvasRef}
+                className="absolute inset-0 block touch-none select-none z-0 crt-aberration"
+              />
+            </div>
+
+            <div className="crt-scanlines" />
+            <div className="crt-moving-line" />
+            <div className="crt-vignette" />
+
+            {!gameState.hasStarted && !gameState.gameOver && (
+              <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none">
+                <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-2 tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-green-400 text-center">OLIV</h2>
+                <p className="text-gray-300 text-sm md:text-xl mb-8 text-center px-4">Navegue pelo canvas e conquiste território.</p>
+                <p className="text-white bg-blue-600 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
+                  TOQUE NA TELA para começar
+                </p>
+              </div>
+            )}
+
+            {gameState.isPaused && !gameState.gameOver && (
+              <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-30 backdrop-blur-md pointer-events-none">
+                <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-4 tracking-widest">PAUSADO</h2>
+                <p className="text-gray-300 md:text-xl">Toque no botão ⏸️ ou pressione <kbd className="font-bold text-yellow-400">P</kbd></p>
+              </div>
+            )}
+
+            {gameState.gameOver && (
+              <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none">
+                <h2 className="text-red-500 text-5xl md:text-7xl font-extrabold mb-4 tracking-widest">GAME OVER</h2>
+                <p className="text-gray-300 text-lg md:text-2xl mb-6">Score Final: <span className="text-green-400 font-bold">{Math.floor(gameState.score)}</span></p>
+                <p className="text-white bg-gray-800 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
+                  TOQUE NA TELA para tentar novamente
+                </p>
+              </div>
+            )}
           </div>
-
-          {!gameState.hasStarted && !gameState.gameOver && (
-            <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none">
-              <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-2 tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-green-400 text-center">OLIV</h2>
-              <p className="text-gray-300 text-sm md:text-xl mb-8 text-center px-4">Navegue pelo canvas e conquiste território.</p>
-              <p className="text-white bg-blue-600 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
-                TOQUE NA TELA para começar
-              </p>
-            </div>
-          )}
-
-          {gameState.isPaused && !gameState.gameOver && (
-            <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-30 backdrop-blur-md pointer-events-none">
-              <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-4 tracking-widest">PAUSADO</h2>
-              <p className="text-gray-300 md:text-xl">Toque no botão ⏸️ ou pressione <kbd className="font-bold text-yellow-400">P</kbd></p>
-            </div>
-          )}
-
-          {gameState.gameOver && (
-            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none">
-              <h2 className="text-red-500 text-5xl md:text-7xl font-extrabold mb-4 tracking-widest">GAME OVER</h2>
-              <p className="text-gray-300 text-lg md:text-2xl mb-6">Score Final: <span className="text-green-400 font-bold">{Math.floor(gameState.score)}</span></p>
-              <p className="text-white bg-gray-800 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
-                TOQUE NA TELA para tentar novamente
-              </p>
-            </div>
-          )}
         </div>
 
         <p className="text-gray-400 text-xs md:text-sm flex flex-wrap justify-center gap-2 md:gap-4 p-2 md:p-4 text-center shrink-0">
