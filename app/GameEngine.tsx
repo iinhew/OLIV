@@ -6,6 +6,7 @@ import { ParticlePool } from '../lib/game-engine/particlePool';
 import { gameAudio } from '../lib/game-engine/audioManager';
 import { RendererUtils } from '../lib/game-engine/rendererUtils';
 import { PhysicsEngine } from '../lib/game-engine/physics';
+import { generateRandomGuestName } from '../lib/game-engine/nameGenerator';
 
 interface CustomBrand {
   id: number;
@@ -19,6 +20,13 @@ const GameEngine = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null); // Ref para o container pai
   const [view, setView] = useState<'game' | 'canvas'>('game');
+
+  // --- NOVO: Guest Session ---
+  const [showGuestModal, setShowGuestModal] = useState(true);
+  const [guestInputName, setGuestInputName] = useState('');
+  const guestUserRef = useRef<{id: string, username: string} | null>(null);
+  const [guestUser, setGuestUser] = useState<{id: string, username: string} | null>(null);
+
 
   const [gameState, setGameState] = useState({
     hasStarted: false,
@@ -91,9 +99,31 @@ const GameEngine = () => {
   const magnetImageRef = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
-    // Pixels e Highscore continuam locais (o dinheiro ainda é seu)
-    pixelsRef.current = parseInt(localStorage.getItem('pixelArenaPixels') || '0');
-    setDisplayPixels(pixelsRef.current);
+    const initializeSession = async () => {
+      const savedId = localStorage.getItem('olivGuestId');
+      if (savedId) {
+        const { data } = await supabase.from('players').select('*').eq('id', savedId).single();
+        if (data) {
+          guestUserRef.current = data;
+          setGuestUser(data);
+          pixelsRef.current = data.pixels;
+          localStorage.setItem('pixelArenaHighScore', data.high_score.toString());
+          localStorage.setItem('pixelArenaPixels', data.pixels.toString());
+          setShowGuestModal(false);
+        } else {
+          localStorage.removeItem('olivGuestId');
+          setGuestInputName(generateRandomGuestName());
+        }
+      } else {
+        setGuestInputName(generateRandomGuestName());
+      }
+      
+      // Sincroniza estado inicial local (fallback)
+      pixelsRef.current = pixelsRef.current || parseInt(localStorage.getItem('pixelArenaPixels') || '0');
+      setDisplayPixels(pixelsRef.current);
+    };
+
+    initializeSession();
 
     // BUSCA DO SUPABASE (Função assíncrona)
     const fetchGlobalBrands = async () => {
@@ -158,6 +188,9 @@ const GameEngine = () => {
       pixelsRef.current -= currentCost;
       localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
       setDisplayPixels(pixelsRef.current);
+      if (guestUserRef.current) {
+        supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
+      }
 
       purchasedBrandsRef.current.push(newBrand as any);
       setBrandsUI([...purchasedBrandsRef.current]);
@@ -236,6 +269,7 @@ const GameEngine = () => {
     gameAudio.loadSound('death', '/sounds/death.wav');
     gameAudio.loadSound('pause', '/sounds/pause.wav');
     gameAudio.loadSound('break', '/sounds/break.wav');
+    gameAudio.loadSound('magnet', '/sounds/ima.wav');
 
     const oliveImg = new Image();
     oliveImg.src = '/images/olive.png';
@@ -326,6 +360,10 @@ const GameEngine = () => {
       if (Math.floor(score) > currentHighScore) {
         currentHighScore = Math.floor(score);
         localStorage.setItem('pixelArenaHighScore', currentHighScore.toString());
+        // Sincroniza Highscore no Cloud
+        if (guestUserRef.current) {
+          supabase.from('players').update({ high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+        }
       }
 
       setGameState(prev => ({
@@ -730,7 +768,6 @@ const GameEngine = () => {
               gameAudio.play('jump');
             }
           } else {
-            gameAudio.play('coin');
             obstacles.splice(i, 1);
 
             for (let j = 0; j < 10; j++) {
@@ -742,11 +779,19 @@ const GameEngine = () => {
             }
 
             if (obs.isMagnet) {
+              gameAudio.play('magnet');
               magnetActiveUntil = Date.now() + 10000;
             } else {
+              gameAudio.play('coin');
               pixelsRef.current += 1;
               localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
-              if (pixelsRef.current % 5 === 0) setDisplayPixels(pixelsRef.current);
+              if (pixelsRef.current % 5 === 0) {
+                setDisplayPixels(pixelsRef.current);
+                // Sincroniza Pixels no Cloud
+                if (guestUserRef.current) {
+                  supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
+                }
+              }
               score += 20;
             }
             continue;
@@ -845,9 +890,61 @@ const GameEngine = () => {
     };
   }, [view]);
 
+  const handleCreateGuest = async () => {
+    const finalName = guestInputName.trim() || generateRandomGuestName();
+    const { data, error } = await supabase.from('players').insert([{ username: finalName, pixels: pixelsRef.current, high_score: gameState.highScore }]).select('*').single();
+    if (data) {
+      localStorage.setItem('olivGuestId', data.id);
+      guestUserRef.current = data;
+      setGuestUser(data);
+      setShowGuestModal(false);
+    } else {
+      alert("Erro ao conectar com servidor. Tente novamente.");
+    }
+  };
+
   return (
     // Transformamos o layout para ser Flex e crescer em toda a tela disponível
-    <div className="flex flex-col w-full h-screen bg-black overflow-hidden pt-4 md:pt-6">
+    <div className="flex flex-col w-full h-screen bg-black overflow-hidden pt-4 md:pt-6 relative">
+      
+      {/* Modal de Convidado */}
+      {showGuestModal && (
+        <div className="absolute inset-0 bg-black/95 z-[9999] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-gray-900 border border-gray-700 p-8 rounded-xl shadow-[0_0_50px_rgba(59,130,246,0.3)] w-full max-w-sm flex flex-col items-center animate-fade-in">
+            <img src="/images/olive.png" alt="OLIV" className="w-20 h-20 mb-4 animate-bounce" style={{ imageRendering: 'pixelated' }} />
+            <h1 className="text-3xl font-black text-white tracking-widest mb-1 uppercase">OLIV</h1>
+            <p className="text-gray-400 text-sm text-center mb-6">Entre no mundo invertido</p>
+            
+            <div className="w-full flex flex-col gap-2 mb-6">
+              <label className="text-gray-400 text-xs font-bold uppercase">Insira seu nome de convidado</label>
+              <div className="relative">
+                <input 
+                  type="text" 
+                  maxLength={15}
+                  value={guestInputName}
+                  onChange={(e) => setGuestInputName(e.target.value)}
+                  className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none font-bold tracking-wide"
+                  placeholder="Seu Nome..."
+                />
+                <button 
+                  onClick={() => setGuestInputName(generateRandomGuestName())}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xl hover:scale-110 transition-transform"
+                  title="Gerar nome aleatório"
+                >
+                  🎲
+                </button>
+              </div>
+            </div>
+
+            <button 
+              onClick={handleCreateGuest}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-blue-500/30 transition-all active:scale-95"
+            >
+              Jogar Agora
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-2 md:gap-4 mb-2 md:mb-4 border-b border-gray-800 w-full px-2 md:px-4 pb-2 justify-center shrink-0">
         <button
