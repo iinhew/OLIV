@@ -6,6 +6,7 @@ export interface Particle {
   life: number;
   isGlitter: boolean;
   active: boolean;
+  color?: string;
 }
 
 export class ParticlePool {
@@ -18,7 +19,7 @@ export class ParticlePool {
     }));
   }
 
-  public spawn(x: number, y: number, vx: number, vy: number, life: number, isGlitter: boolean) {
+  public spawn(x: number, y: number, vx: number, vy: number, life: number, isGlitter: boolean, color?: string) {
     for (let i = 0; i < this.pool.length; i++) {
       if (!this.pool[i].active) {
         this.pool[i].x = x;
@@ -27,6 +28,7 @@ export class ParticlePool {
         this.pool[i].vy = vy;
         this.pool[i].life = life;
         this.pool[i].isGlitter = isGlitter;
+        this.pool[i].color = color;
         this.pool[i].active = true;
         return;
       }
@@ -44,7 +46,11 @@ export class ParticlePool {
         if (p.life <= 0) {
           p.active = false; // "Destrói" a partícula apenas inativando-a
         } else {
-          ctx.fillStyle = p.isGlitter ? `rgba(255, 223, 0, ${p.life})` : `rgba(174, 197, 81, ${p.life})`;
+          if (p.color) {
+            ctx.fillStyle = p.color.replace('ALPHA', p.life.toFixed(2));
+          } else {
+            ctx.fillStyle = p.isGlitter ? `rgba(255, 223, 0, ${p.life})` : `rgba(174, 197, 81, ${p.life})`;
+          }
           ctx.fillRect(p.x, p.y, 4, 4);
         }
       }
