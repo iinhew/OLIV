@@ -24,8 +24,8 @@ const GameEngine = () => {
   // --- NOVO: Guest Session ---
   const [showGuestModal, setShowGuestModal] = useState(true);
   const [guestInputName, setGuestInputName] = useState('');
-  const guestUserRef = useRef<{id: string, username: string} | null>(null);
-  const [guestUser, setGuestUser] = useState<{id: string, username: string} | null>(null);
+  const guestUserRef = useRef<{ id: string, username: string } | null>(null);
+  const [guestUser, setGuestUser] = useState<{ id: string, username: string } | null>(null);
 
 
   const [gameState, setGameState] = useState({
@@ -117,7 +117,7 @@ const GameEngine = () => {
       } else {
         setGuestInputName(generateRandomGuestName());
       }
-      
+
       // Sincroniza estado inicial local (fallback)
       pixelsRef.current = pixelsRef.current || parseInt(localStorage.getItem('pixelArenaPixels') || '0');
       setDisplayPixels(pixelsRef.current);
@@ -265,6 +265,7 @@ const GameEngine = () => {
 
   useEffect(() => {
     gameAudio.loadSound('jump', '/sounds/pop.wav');
+    gameAudio.loadSound('jump_trampoline', '/sounds/jump.wav');
     gameAudio.loadSound('coin', '/sounds/coin.wav');
     gameAudio.loadSound('death', '/sounds/death.wav');
     gameAudio.loadSound('pause', '/sounds/pause.wav');
@@ -303,7 +304,8 @@ const GameEngine = () => {
       height: GAME_CONSTANTS.PLAYER_HEIGHT,
       velocity: 0,
       gravity: GAME_CONSTANTS.GRAVITY,
-      jumpStrength: GAME_CONSTANTS.JUMP_STRENGTH
+      jumpStrength: GAME_CONSTANTS.JUMP_STRENGTH,
+      rocketTimer: 0
     };
 
     // --- LÓGICA DE CANVAS DINÂMICO ---
@@ -486,6 +488,30 @@ const GameEngine = () => {
         score += 0.05;
         gameSpeed = 3 + (score / 150);
 
+        if (player.rocketTimer > 0) {
+          player.rocketTimer--;
+          particlePool.spawn(
+            player.x + player.width / 2 + (Math.random() - 0.5) * 10,
+            player.y + player.height,
+            (Math.random() - 0.5) * 2,
+            Math.random() * 2 + 2,
+            1.0,
+            false,
+            'rgba(200, 200, 200, ALPHA)'
+          );
+          if (Math.random() < 0.3) {
+            particlePool.spawn(
+              player.x + player.width / 2,
+              player.y + player.height,
+              (Math.random() - 0.5) * 2,
+              Math.random() * 2 + 2,
+              0.5,
+              false,
+              'rgba(255, 100, 0, ALPHA)'
+            );
+          }
+        }
+
         if (Math.floor(score) % 5 === 0) setGameState(prev => ({ ...prev, score: Math.floor(score) }));
 
         // Partículas de Superação de High Score
@@ -659,15 +685,8 @@ const GameEngine = () => {
             ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
           }
         } else {
-          if (obs.isTrampoline) {
-            ctx.shadowColor = '#10b981';
-            ctx.shadowBlur = 15;
-            ctx.fillStyle = obs.color;
-            ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
-            ctx.fillStyle = '#059669';
-            ctx.fillRect(obs.x, obs.y + 4, obs.width, 2);
-            ctx.shadowBlur = 0;
-          } else {
+          // Apenas renderiza itens que não são baseados em grade
+          if (!obs.isBrand) {
             const imgRef = obs.isMagnet ? magnetImageRef : coinImageRef;
             if (imgRef.current && imgRef.current.complete) {
               let sourceX = 0, sourceY = 0, sourceSizeX = 0, sourceSizeY = 0;
@@ -749,7 +768,8 @@ const GameEngine = () => {
 
               if (obs.isBouncy) {
                 player.velocity = player.jumpStrength * 2.0;
-                gameAudio.play('jump');
+                gameAudio.play('jump_trampoline');
+                player.rocketTimer = 30;
               }
 
               if (obs.isBreakable && !obs.isBreaking) {
@@ -760,12 +780,6 @@ const GameEngine = () => {
               if (!obs.isBouncy) {
                 triggerGameOver();
               }
-            }
-          } else if (obs.isTrampoline) {
-            if (player.velocity > 0 && player.y + player.height - player.velocity <= obs.y + 10) {
-              player.y = obs.y - player.height;
-              player.velocity = player.jumpStrength * 2.0;
-              gameAudio.play('jump');
             }
           } else {
             obstacles.splice(i, 1);
@@ -844,19 +858,6 @@ const GameEngine = () => {
           isBreakable: isBreakable,
           isBouncy: isBouncy
         });
-
-        if (brand && Math.random() < 0.15) {
-          obstacles.push({
-            x: canvas.width + 100 + Math.random() * (brandWidth - 20),
-            y: yPos - 10,
-            width: 20,
-            height: 10,
-            color: '#10b981',
-            isBrand: false,
-            isTrampoline: true,
-            name: 'TRAMPOLIM'
-          });
-        }
       }
 
       if (isCountingDown) {
@@ -906,7 +907,7 @@ const GameEngine = () => {
   return (
     // Transformamos o layout para ser Flex e crescer em toda a tela disponível
     <div className="flex flex-col w-full h-screen bg-black overflow-hidden pt-4 md:pt-6 relative">
-      
+
       {/* Modal de Convidado */}
       {showGuestModal && (
         <div className="absolute inset-0 bg-black/95 z-[9999] flex items-center justify-center p-4 backdrop-blur-md">
@@ -914,19 +915,19 @@ const GameEngine = () => {
             <img src="/images/olive.png" alt="OLIV" className="w-20 h-20 mb-4 animate-bounce" style={{ imageRendering: 'pixelated' }} />
             <h1 className="text-3xl font-black text-white tracking-widest mb-1 uppercase">OLIV</h1>
             <p className="text-gray-400 text-sm text-center mb-6">Entre no mundo invertido</p>
-            
+
             <div className="w-full flex flex-col gap-2 mb-6">
               <label className="text-gray-400 text-xs font-bold uppercase">Insira seu nome de convidado</label>
               <div className="relative">
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   maxLength={15}
                   value={guestInputName}
                   onChange={(e) => setGuestInputName(e.target.value)}
                   className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none font-bold tracking-wide"
                   placeholder="Seu Nome..."
                 />
-                <button 
+                <button
                   onClick={() => setGuestInputName(generateRandomGuestName())}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-xl hover:scale-110 transition-transform"
                   title="Gerar nome aleatório"
@@ -936,7 +937,7 @@ const GameEngine = () => {
               </div>
             </div>
 
-            <button 
+            <button
               onClick={handleCreateGuest}
               className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-blue-500/30 transition-all active:scale-95"
             >
@@ -946,7 +947,14 @@ const GameEngine = () => {
         </div>
       )}
 
-      <div className="flex gap-2 md:gap-4 mb-2 md:mb-4 border-b border-gray-800 w-full px-2 md:px-4 pb-2 justify-center shrink-0">
+      <div className="flex gap-2 md:gap-4 mb-2 md:mb-4 border-b border-gray-800 w-full px-2 md:px-4 pb-2 justify-center shrink-0 relative">
+        {/* Nome do Jogador Logado */}
+        {guestUser && (
+          <div className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 flex items-center gap-1 md:gap-2 bg-gray-900/80 px-2 md:px-3 py-1 rounded-full border border-gray-700 shadow-sm z-10 pointer-events-none">
+            <span className="hidden sm:inline text-[10px] md:text-xs text-gray-400">Convidado:</span>
+            <span className="text-[10px] md:text-sm text-blue-400 font-bold truncate max-w-[100px] md:max-w-[150px]">{guestUser.username}</span>
+          </div>
+        )}
         <button
           onClick={() => { setView('canvas'); setDisplayPixels(pixelsRef.current); }}
           className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'canvas' ? 'bg-gray-800 text-white border-b-2 border-blue-500' : 'text-gray-500 hover:text-white'}`}
