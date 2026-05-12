@@ -397,6 +397,7 @@ const GameEngine = () => {
         hasBeatenHighScore = false;
         countdownUntil = Date.now() + 3000;
         setGameState(prev => ({ ...prev, gameOver: false, hasStarted: true, score: 0 }));
+        window.cancelAnimationFrame(animationFrameId);
         render();
       } else {
         if (countdownUntil > Date.now()) return;
@@ -651,11 +652,6 @@ const GameEngine = () => {
             }
           }
 
-          if (obs.color !== 'transparent') {
-            ctx.fillStyle = obs.color;
-            ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
-          }
-
           let rows = 8;
           let cols = obs.pixel_data.length / 8;
           let pixels = obs.pixel_data;
@@ -667,16 +663,24 @@ const GameEngine = () => {
             pixels = pixels.slice(1);
           }
 
-          // Renderização Quadrada Perfeita Dinâmica
-          const pSize = obs.height / rows; // Altura dividida pelas linhas lógicas
+          // Usa o sistema de cache de Offscreen Canvas para evitar milhares de fillRect por frame
+          const cachedCanvas = RendererUtils.getOrRenderPixelGrid(
+            pixels, 
+            cols, 
+            rows, 
+            obs.color, 
+            obs.color === 'transparent', 
+            obs.width, 
+            obs.height
+          );
 
-          for (let row = 0; row < rows; row++) {
-            for (let col = 0; col < cols; col++) {
-              const pColor = pixels[row * cols + col];
-              if (pColor && pColor !== '') {
-                ctx.fillStyle = pColor;
-                ctx.fillRect(obs.x + col * pSize, obs.y + row * pSize, pSize, pSize);
-              }
+          if (cachedCanvas) {
+            ctx.drawImage(cachedCanvas, obs.x, obs.y);
+          } else {
+            // Fallback caso o cache falhe
+            if (obs.color !== 'transparent') {
+              ctx.fillStyle = obs.color;
+              ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
             }
           }
 
@@ -711,8 +715,7 @@ const GameEngine = () => {
                 sourceX = Math.floor(col * rawWidth);
                 sourceY = Math.floor(row * rawHeight);
 
-                ctx.shadowColor = '#3b82f6';
-                ctx.shadowBlur = 15;
+                // Removed shadowBlur for mobile performance
 
                 // Aumentando o tamanho do íma na tela (apenas visual, a hitbox continua a mesma)
                 destW = 45; // de 30 para 45
@@ -733,8 +736,7 @@ const GameEngine = () => {
                 sourceSizeX = size;
                 sourceSizeY = size;
 
-                ctx.shadowColor = '#fbbf24';
-                ctx.shadowBlur = 15;
+                // Removed shadowBlur for mobile performance
               }
 
               ctx.drawImage(
@@ -743,7 +745,7 @@ const GameEngine = () => {
                 destX, destY, destW, destH
               );
 
-              ctx.shadowBlur = 0;
+              // Removed shadowBlur for mobile performance
             } else {
               if (obs.color !== 'transparent') {
                 ctx.fillStyle = obs.color;

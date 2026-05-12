@@ -7,7 +7,7 @@ export class RendererUtils {
    * Isso economiza milhares de chamadas fillRect() na thread principal durante o Game Loop.
    */
   public static getOrRenderPixelGrid(
-    pixelDataStr: string, 
+    pixelData: string[], 
     cols: number, 
     rows: number, 
     baseColor: string, 
@@ -17,17 +17,12 @@ export class RendererUtils {
   ): HTMLCanvasElement | null {
     if (typeof document === 'undefined') return null;
 
-    const cacheKey = `${pixelDataStr}_${baseColor}_${isTransparentBg}_${width}_${height}`;
+    // Use a hash or just join the array to create a key. Since array can be large, maybe just a fast hash or simple join.
+    // However, it's safer to just use a property from the brand if possible, but let's join it for safety
+    const cacheKey = `${pixelData.join('')}_${baseColor}_${isTransparentBg}_${width}_${height}`;
     
     if (this.pixelGridCache.has(cacheKey)) {
       return this.pixelGridCache.get(cacheKey)!;
-    }
-
-    let parsedData: any[] = [];
-    try {
-      parsedData = JSON.parse(pixelDataStr);
-    } catch {
-      return null;
     }
 
     const offCanvas = document.createElement('canvas');
@@ -50,8 +45,8 @@ export class RendererUtils {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const index = r * cols + c;
-        if (parsedData[index] && parsedData[index] !== '') {
-          offCtx.fillStyle = parsedData[index];
+        if (pixelData[index] && pixelData[index] !== '') {
+          offCtx.fillStyle = pixelData[index];
           offCtx.fillRect(c * pSize, r * pSize, pSize, pSize);
         }
       }
