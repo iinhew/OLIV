@@ -39,6 +39,9 @@ const GameEngine = () => {
   const pixelsRef = useRef<number>(0);
   const [displayPixels, setDisplayPixels] = useState(0);
 
+  const [isMutedSFX, setIsMutedSFX] = useState(false);
+  const [isMutedMusic, setIsMutedMusic] = useState(false);
+
   const purchasedBrandsRef = useRef<CustomBrand[]>([]);
   const [brandsUI, setBrandsUI] = useState<CustomBrand[]>([]);
 
@@ -263,7 +266,18 @@ const GameEngine = () => {
   }, [baseColor, adType, isTransparentBg]);
   // ---------------------------------------------------------------------------
 
+  const handleToggleSFX = () => {
+    gameAudio.toggleMuteSFX();
+    setIsMutedSFX(gameAudio.isMutedSFX);
+  };
+
+  const handleToggleMusic = () => {
+    gameAudio.toggleMuteMusic();
+    setIsMutedMusic(gameAudio.isMutedMusic);
+  };
+
   useEffect(() => {
+    gameAudio.loadMusic('bgm', '/sounds/bgm.mp3');
     gameAudio.loadSound('jump', '/sounds/pop.wav');
     gameAudio.loadSound('jump_trampoline', '/sounds/jump.wav');
     gameAudio.loadSound('coin', '/sounds/coin.wav');
@@ -380,6 +394,7 @@ const GameEngine = () => {
 
       if (!hasStarted) {
         if (countdownUntil === 0) {
+          gameAudio.playMusic('bgm');
           countdownUntil = Date.now() + 3000;
           setGameState(prev => ({ ...prev, hasStarted: true }));
         }
@@ -1218,6 +1233,12 @@ const GameEngine = () => {
             High Score: {gameState.highScore}
           </span>
           <div className="flex gap-3 md:gap-6 items-center">
+            <button onClick={handleToggleMusic} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Música de Fundo">
+              {isMutedMusic ? '🔇' : '🎵'}
+            </button>
+            <button onClick={handleToggleSFX} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Efeitos Sonoros">
+              {isMutedSFX ? '🔕' : '🔔'}
+            </button>
             <span className="text-yellow-400">Px: {displayPixels}</span>
             <span className="text-green-400">Score: {Math.floor(gameState.score)}</span>
             <button
