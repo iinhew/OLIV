@@ -42,6 +42,16 @@ const GameEngine = () => {
   const [rankingData, setRankingData] = useState<{ username: string, high_score: number }[]>([]);
   const [loadingRanking, setLoadingRanking] = useState(false);
 
+  // --- NOVO: Easter Egg Konami / Modo Neo ---
+  const [neoMode, setNeoMode] = useState(false);
+  const neoModeRef = useRef(false);
+  const neoExtraLifeRef = useRef(0); // 0 = sem extra life, 1 = tem vida extra
+  const bulletTimeRef = useRef(0);   // frames de bullet time restantes
+  const konamiSequenceRef = useRef<string[]>([]);
+  const KONAMI_CODE = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
+  const oliveNeoImageRef = useRef<HTMLImageElement | null>(null);
+  // ----------------------------------------
+
   const handleOpenRanking = async () => {
     setShowRankingModal(true);
     setLoadingRanking(true);
@@ -123,6 +133,26 @@ const GameEngine = () => {
   const crownImageRef = useRef<HTMLImageElement | null>(null);
   const coinImageRef = useRef<HTMLImageElement | null>(null);
   const magnetImageRef = useRef<HTMLImageElement | null>(null);
+
+  // --- Konami Code listener (ativo na vista do canvas) ---
+  useEffect(() => {
+    const handleKonami = (e: KeyboardEvent) => {
+      if (view !== 'canvas') return;
+      const seq = konamiSequenceRef.current;
+      seq.push(e.code);
+      if (seq.length > KONAMI_CODE.length) seq.shift();
+      if (seq.length === KONAMI_CODE.length && seq.every((k, i) => k === KONAMI_CODE[i])) {
+        konamiSequenceRef.current = [];
+        const next = !neoModeRef.current;
+        neoModeRef.current = next;
+        setNeoMode(next);
+        if (next) neoExtraLifeRef.current = 1;
+      }
+    };
+    window.addEventListener('keydown', handleKonami);
+    return () => window.removeEventListener('keydown', handleKonami);
+  }, [view]);
+  // -------------------------------------------------------
 
   useEffect(() => {
     const initializeSession = async () => {
@@ -429,6 +459,10 @@ const GameEngine = () => {
     oliveImg.src = '/images/olive.png';
     oliveImageRef.current = oliveImg;
 
+    const oliveNeoImg = new Image();
+    oliveNeoImg.src = '/images/olive_neo.png';
+    oliveNeoImageRef.current = oliveNeoImg;
+
     const crownImg = new Image();
     crownImg.src = '/images/crown.png';
     crownImageRef.current = crownImg;
@@ -501,6 +535,20 @@ const GameEngine = () => {
     let magnetActiveUntil = 0;
     let countdownUntil = 0;
 
+    // --- NEO MODE: Matrix rain drops ---
+    const matrixChars = '01ABCDEFNEOMATRIX';
+    let matrixDrops: { x: number, y: number, speed: number, char: string, alpha: number }[] = [];
+    const initMatrixDrops = (w: number, h: number) => {
+      matrixDrops = Array.from({ length: 60 }, () => ({
+        x: Math.random() * w, y: Math.random() * h,
+        speed: 1 + Math.random() * 3,
+        char: matrixChars[Math.floor(Math.random() * matrixChars.length)],
+        alpha: 0.2 + Math.random() * 0.6
+      }));
+    };
+    initMatrixDrops(canvas.width, canvas.height);
+    // ------------------------------------
+
     let currentHighScore = parseInt(localStorage.getItem('pixelArenaHighScore') || '0');
     setGameState(prev => ({ ...prev, highScore: currentHighScore }));
 
@@ -509,14 +557,32 @@ const GameEngine = () => {
     const triggerGameOver = () => {
       // --- HACK DE INVENCIBILIDADE (via Console) ---
       if (typeof window !== 'undefined' && (window as any).isInvincible) {
-        // Se cair no buraco ou bater no teto, volta pro meio da tela
         if (player.y + player.height >= canvas.height || player.y <= 0) {
           player.y = canvas.height / 2;
           player.velocity = 0;
         }
-        return; // Impede a morte
+        return;
       }
       // ----------------------------------------------
+
+      // --- NEO EXTRA LIFE (protege de QUALQUER morte) ---
+      if (neoModeRef.current && neoExtraLifeRef.current > 0) {
+        neoExtraLifeRef.current = 0;
+        bulletTimeRef.current = 50;
+        // Reposiciona no centro da tela
+        player.y = canvas.height / 2 - player.height;
+        player.velocity = player.jumpStrength * 0.8;
+        // Partículas verdes
+        for (let j = 0; j < 20; j++) {
+          particlePool.spawn(
+            player.x + player.width / 2, player.y + player.height / 2,
+            (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10,
+            1.5, false, 'rgba(0, 255, 70, ALPHA)'
+          );
+        }
+        return; // Não morre!
+      }
+      // --------------------------------------------------
 
       isGameOver = true;
       shakeFrames = 15;
@@ -612,6 +678,15 @@ const GameEngine = () => {
         return;
       }
 
+      // --- BULLET TIME (Neo extra-life) ---
+      if (bulletTimeRef.current > 0) {
+        bulletTimeRef.current--;
+        animationFrameId = window.requestAnimationFrame(render);
+        // Slow motion: renderiza apenas 1 em cada 3 frames
+        if (bulletTimeRef.current % 3 !== 0) return;
+      }
+      // ------------------------------------
+
       let isCountingDown = false;
       let countdownSecs = 0;
       if (countdownUntil > Date.now()) {
@@ -637,15 +712,43 @@ const GameEngine = () => {
         shakeFrames--;
       }
 
-      // 1. Renderiza o fundo de estrelas (Parallax Base)
-      parallaxLayers.forEach(layer => {
-        layer.stars.forEach(star => {
-          if (isPhysicsActive) star.x -= gameSpeed * layer.speed;
-          if (star.x < 0) { star.x = canvas.width; star.y = Math.random() * canvas.height; }
-          ctx.fillStyle = layer.color;
-          ctx.fillRect(star.x, star.y, star.size, star.size);
+      // 1. Fundo: modo Matrix (Neo) ou estrelas normais
+      if (neoModeRef.current) {
+        // Fundo verde escuro sólido
+        ctx.fillStyle = '#020d02';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Camada de brilho sutil
+        ctx.fillStyle = 'rgba(0, 40, 10, 0.6)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.font = 'bold 14px monospace';
+        matrixDrops.forEach(drop => {
+          if (isPhysicsActive || isGameOver) {
+            drop.y += drop.speed * 0.5;
+            drop.x -= (isPhysicsActive ? gameSpeed : 3) * 0.4;
+            if (drop.y > canvas.height) {
+              drop.y = -14;
+              drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+            }
+            if (drop.x < -14) {
+              drop.x = canvas.width + Math.random() * 100;
+              drop.y = Math.random() * canvas.height;
+              drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+            }
+          }
+          ctx.fillStyle = `rgba(0, 255, 70, ${drop.alpha})`;
+          ctx.fillText(drop.char, drop.x, drop.y);
         });
-      });
+      } else {
+        parallaxLayers.forEach(layer => {
+          layer.stars.forEach(star => {
+            if (isPhysicsActive) star.x -= gameSpeed * layer.speed;
+            if (star.x < 0) { star.x = canvas.width; star.y = Math.random() * canvas.height; }
+            ctx.fillStyle = layer.color;
+            ctx.fillRect(star.x, star.y, star.size, star.size);
+          });
+        });
+      }
 
       // 2. Lógica de Física e Geração de Artes de Fundo (Parallax Ads)
       if (isPhysicsActive) {
@@ -742,7 +845,7 @@ const GameEngine = () => {
         if (ad.x + ad.width < -100) activeParallaxAds.splice(i, 1);
       }
 
-      // 4. Verificação de Morte por queda
+      // 4. Verificação de Morte por queda/teto
       if ((player.y + player.height >= canvas.height || player.y <= 0) && hasStarted) {
         if (!isGameOver) triggerGameOver();
       }
@@ -760,15 +863,30 @@ const GameEngine = () => {
         renderY += Math.sin(Date.now() / 200) * 5;
       }
 
-      if (oliveImageRef.current && oliveImageRef.current.complete) {
+      // Escolhe imagem: neo mode = olive_neo, caso contrário = olive normal
+      const activeOliveImg = neoModeRef.current ? oliveNeoImageRef.current : oliveImageRef.current;
+      if (activeOliveImg && activeOliveImg.complete) {
+        // Tint verde em modo matrix
+        if (neoModeRef.current) {
+          ctx.save();
+          ctx.filter = 'hue-rotate(80deg) saturate(3) brightness(1.2)';
+        }
         ctx.drawImage(
-          oliveImageRef.current,
+          activeOliveImg,
           player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight),
           drawWidth, drawHeight
         );
+        if (neoModeRef.current) ctx.restore();
       } else {
-        ctx.fillStyle = 'white';
+        ctx.fillStyle = neoModeRef.current ? '#00ff46' : 'white';
         ctx.fillRect(player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight), drawWidth, drawHeight);
+      }
+
+      // Indicador de vida extra Neo
+      if (neoModeRef.current && neoExtraLifeRef.current > 0) {
+        ctx.fillStyle = 'rgba(0,255,70,0.9)';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText('[NEO SHIELD]', player.x - 8, renderY - 8);
       }
 
       if (hasBeatenHighScore && crownImageRef.current && crownImageRef.current.complete) {
@@ -960,7 +1078,36 @@ const GameEngine = () => {
               }
             } else {
               if (!obs.isBouncy) {
-                triggerGameOver();
+                // --- NEO EXTRA LIFE: desvia em vez de morrer ---
+                if (neoModeRef.current && neoExtraLifeRef.current > 0) {
+                  neoExtraLifeRef.current = 0;
+                  bulletTimeRef.current = 40;
+
+                  if (player.velocity < 0) {
+                    // Batida de BAIXO (subindo): empurra para BAIXO, fora da plataforma
+                    player.y = obs.y + obs.height + 2;
+                    player.velocity = Math.abs(player.jumpStrength) * 0.6;
+                  } else {
+                    // Batida LATERAL (descendo de lado): empurra para CIMA
+                    player.velocity = player.jumpStrength * 1.2;
+                    player.y -= 10;
+                  }
+
+                  // Efeito de partículas verdes
+                  for (let j = 0; j < 15; j++) {
+                    particlePool.spawn(
+                      player.x + player.width / 2, player.y + player.height / 2,
+                      (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8,
+                      1.2, false, 'rgba(0, 255, 70, ALPHA)'
+                    );
+                  }
+                  // Flash verde na tela
+                  ctx.fillStyle = 'rgba(0, 255, 70, 0.25)';
+                  ctx.fillRect(0, 0, canvas.width, canvas.height);
+                } else {
+                  triggerGameOver();
+                }
+                // -----------------------------------------------
               }
             }
           } else {
@@ -1387,6 +1534,29 @@ const GameEngine = () => {
             })}
           </div>
           <p className="text-gray-500 text-xs mt-4 text-center">Clique em um espaço vazio para abrir o estúdio de Pixel Art!</p>
+
+          {/* D-PAD MOBILE */}
+          <div className="md:hidden flex flex-col items-center gap-1 mt-4 opacity-70 select-none">
+            <p className="text-gray-600 text-[9px] mb-1 font-mono">KONAMI CODE</p>
+            <div className="flex justify-center">
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowUp', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9650;</button>
+            </div>
+            <div className="flex gap-1">
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowLeft', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9664;</button>
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowDown', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9660;</button>
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowRight', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9654;</button>
+            </div>
+            <div className="flex gap-2 mt-1">
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyB', bubbles: true }))} className="w-10 h-10 rounded-full bg-gray-800/80 border border-gray-600 text-white text-xs font-bold active:bg-gray-600">B</button>
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA', bubbles: true }))} className="w-10 h-10 rounded-full bg-gray-800/80 border border-gray-600 text-white text-xs font-bold active:bg-gray-600">A</button>
+            </div>
+          </div>
+        </div>
+      )}
+      S
+      {neoMode && view === 'canvas' && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-black/90 border border-green-500 text-green-400 font-mono text-xs px-4 py-2 rounded-full shadow-[0_0_20px_rgba(0,255,70,0.5)] animate-pulse pointer-events-none">
+          &#9672; MODO MATRIX ATIVADO &#9672; VIDA EXTRA ATIVA
         </div>
       )}
 
@@ -1741,12 +1911,26 @@ const GameEngine = () => {
             )}
 
             {gameState.gameOver && (
-              <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none">
-                <h2 className="text-red-500 text-5xl md:text-7xl font-extrabold mb-4 tracking-widest">GAME OVER</h2>
-                <p className="text-gray-300 text-lg md:text-2xl mb-6">Score Final: <span className="text-green-400 font-bold">{Math.floor(gameState.score)}</span></p>
-                <p className="text-white bg-gray-800 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
-                  TOQUE NA TELA para tentar novamente
-                </p>
+              <div className={`absolute inset-0 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none ${neoMode ? 'bg-black/70' : 'bg-black/80'}`}>
+                {neoMode ? (
+                  <>
+                    <p className="text-green-400 font-mono text-xs tracking-[0.3em] mb-2 opacity-80">// SIMULATION_TERMINATED</p>
+                    <h2 className="font-extrabold mb-4 tracking-widest text-5xl md:text-7xl" style={{ color: '#00ff46', textShadow: '0 0 20px #00ff46, 0 0 40px #00cc38' }}>GAME OVER</h2>
+                    <p className="font-mono text-green-300 text-lg md:text-2xl mb-2">score.final = <span className="text-white font-bold">{Math.floor(gameState.score)}</span></p>
+                    <p className="text-green-600 font-mono text-xs mb-6">&gt; neo.shield = th3_ch0s3n_0N3</p>
+                    <p className="font-mono text-green-400 border border-green-500 px-6 py-3 md:px-8 md:py-4 rounded animate-pulse font-bold" style={{ boxShadow: '0 0 15px rgba(0,255,70,0.4)' }}>
+                      [ TOQUE PARA REINICIAR ]
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-red-500 text-5xl md:text-7xl font-extrabold mb-4 tracking-widest">GAME OVER</h2>
+                    <p className="text-gray-300 text-lg md:text-2xl mb-6">Score Final: <span className="text-green-400 font-bold">{Math.floor(gameState.score)}</span></p>
+                    <p className="text-white bg-gray-800 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
+                      TOQUE NA TELA para tentar novamente
+                    </p>
+                  </>
+                )}
               </div>
             )}
           </div>
