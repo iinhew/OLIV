@@ -575,6 +575,8 @@ const GameEngine = () => {
     let hasBeatenHighScore = false;
     let magnetActiveUntil = 0;
     let countdownUntil = 0;
+    let lastParallaxAdId = -1; // Anti-duplicata: rastreia última arte de fundo
+    let lastBrandId = -1;      // Anti-duplicata: rastreia última plataforma
 
     // --- NEO MODE: Matrix rain drops ---
     const matrixChars = '01ABCDEFNEOMATRIX';
@@ -650,7 +652,7 @@ const GameEngine = () => {
 
     const handleAction = (e?: Event) => {
       if (e && e.cancelable) e.preventDefault();
-      if (isPaused || view === 'canvas') return;
+      if (isPaused || view === 'canvas' || view === 'brecho') return;
 
       if (!hasStarted) {
         if (countdownUntil === 0) {
@@ -672,7 +674,9 @@ const GameEngine = () => {
         hasBeatenHighScore = false;
         countdownUntil = Date.now() + 3000;
         setGameState(prev => ({ ...prev, gameOver: false, hasStarted: true, score: 0 }));
+        // Garante que o render loop reinicie mesmo se estava parado
         window.cancelAnimationFrame(animationFrameId);
+        lastFrameTime = performance.now();
         render();
       } else {
         if (countdownUntil > Date.now()) return;
@@ -809,7 +813,7 @@ const GameEngine = () => {
       // 2. Lógica de Física e Geração de Artes de Fundo (Parallax Ads)
       if (isPhysicsActive) {
         player.velocity += player.gravity * dt;
-        player.y += player.velocity * dt;
+        player.y += player.velocity;
         score += 0.05 * dt;
         gameSpeed = 3 + (score / 150);
 
@@ -858,7 +862,13 @@ const GameEngine = () => {
         if (Math.random() < spawnChance) {
           const adKeys = Object.keys(parallaxImagesRef.current);
           if (adKeys.length > 0) {
-            const randomId = parseInt(adKeys[Math.floor(Math.random() * adKeys.length)]);
+            // Evita repetir a mesma arte consecutivamente
+            let randomIdx = Math.floor(Math.random() * adKeys.length);
+            if (adKeys.length > 1 && parseInt(adKeys[randomIdx]) === lastParallaxAdId) {
+              randomIdx = (randomIdx + 1) % adKeys.length;
+            }
+            const randomId = parseInt(adKeys[randomIdx]);
+            lastParallaxAdId = randomId;
             const img = parallaxImagesRef.current[randomId];
 
             // Variabilidade de tamanho entre 40% e 80% do tamanho real desenhado
@@ -1148,32 +1158,21 @@ const GameEngine = () => {
               }
             } else {
               if (!obs.isBouncy) {
-                // --- NEO EXTRA LIFE: desvia em vez de morrer ---
+                // --- NEO EXTRA LIFE: reseta posição, mantém score ---
                 if (neoModeRef.current && neoExtraLifeRef.current > 0) {
                   neoExtraLifeRef.current = 0;
-                  bulletTimeRef.current = 40;
-
-                  if (player.velocity < 0) {
-                    // Batida de BAIXO (subindo): empurra para BAIXO, fora da plataforma
-                    player.y = obs.y + obs.height + 2;
-                    player.velocity = Math.abs(player.jumpStrength) * 0.6;
-                  } else {
-                    // Batida LATERAL (descendo de lado): empurra para CIMA
-                    player.velocity = player.jumpStrength * 1.2;
-                    player.y -= 10;
-                  }
-
-                  // Efeito de partículas verdes
-                  for (let j = 0; j < 15; j++) {
+                  player.y = Math.min(150, canvas.height / 2);
+                  player.velocity = 0;
+                  obstacles = [];
+                  activeParallaxAds = [];
+                  countdownUntil = Date.now() + 3000;
+                  for (let j = 0; j < 20; j++) {
                     particlePool.spawn(
                       player.x + player.width / 2, player.y + player.height / 2,
-                      (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8,
-                      1.2, false, 'rgba(0, 255, 70, ALPHA)'
+                      (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10,
+                      1.5, false, 'rgba(0, 255, 70, ALPHA)'
                     );
                   }
-                  // Flash verde na tela
-                  ctx.fillStyle = 'rgba(0, 255, 70, 0.25)';
-                  ctx.fillRect(0, 0, canvas.width, canvas.height);
                 } else {
                   triggerGameOver();
                 }
@@ -1217,12 +1216,26 @@ const GameEngine = () => {
       }
 
       // 8. Geração de novos obstáculos dinâmicos
-      if (isPhysicsActive && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < canvas.width - 300)) {
-        const isBrand = Math.random() > 0.6;
+      if (isPhysicsActive && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < canvas.width - 250)) {
+        const isBrand = Math.random() > 0.45; // 55% chance de plataforma (antes era 40%)
 
         // Filtra só as marcas que SÃO plataformas físicas (array de pixels com mais de 1 elemento)
         const obstacleBrands = purchasedBrandsRef.current.filter(b => b.pixel_data && b.pixel_data.length > 1);
-        const brand = isBrand && obstacleBrands.length > 0 ? obstacleBrands[Math.floor(Math.random() * obstacleBrands.length)] : null;
+        // Round-robin: evita repetir a mesma plataforma consecutivamente
+        let brand: typeof obstacleBrands[0] | null = null;
+        if (isBrand && obstacleBrands.length > 0) {
+          if (obstacleBrands.length === 1) {
+            brand = obstacleBrands[0];
+          } else {
+            // Pega uma diferente da última
+            let idx = Math.floor(Math.random() * obstacleBrands.length);
+            if (obstacleBrands[idx].id === lastBrandId) {
+              idx = (idx + 1) % obstacleBrands.length;
+            }
+            brand = obstacleBrands[idx];
+            lastBrandId = brand.id;
+          }
+        }
 
         let rows = 8;
         let cols = brand?.pixel_data ? brand.pixel_data.length / 8 : 24;
