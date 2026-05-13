@@ -610,11 +610,13 @@ const GameEngine = () => {
       // --- NEO EXTRA LIFE (protege de QUALQUER morte) ---
       if (neoModeRef.current && neoExtraLifeRef.current > 0) {
         neoExtraLifeRef.current = 0;
-        bulletTimeRef.current = 50;
-        // Reposiciona no centro da tela
-        player.y = canvas.height / 2 - player.height;
-        player.velocity = player.jumpStrength * 0.8;
-        // Partículas verdes
+        // Reseta posição e limpa obstáculos, mantém o score
+        player.y = Math.min(150, canvas.height / 2);
+        player.velocity = 0;
+        obstacles = [];
+        activeParallaxAds = [];
+        countdownUntil = Date.now() + 3000;
+        // Partículas verdes de feedback
         for (let j = 0; j < 20; j++) {
           particlePool.spawn(
             player.x + player.width / 2, player.y + player.height / 2,
@@ -740,14 +742,6 @@ const GameEngine = () => {
       const dt = Math.min(rawDt, 3); // Limita a 3x para evitar saltos em tab-switch
       lastFrameTime = now;
       // ------------------
-
-      // --- BULLET TIME (Neo extra-life) ---
-      if (bulletTimeRef.current > 0) {
-        bulletTimeRef.current -= dt;
-        animationFrameId = window.requestAnimationFrame(render);
-        if (bulletTimeRef.current > 0 && Math.floor(bulletTimeRef.current) % 3 !== 0) return;
-      }
-      // ------------------------------------
 
       let isCountingDown = false;
       let countdownSecs = 0;
