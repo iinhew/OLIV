@@ -55,6 +55,21 @@ const GameEngine = () => {
   const vazioTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // ----------------------------------------
 
+  // --- NOVO: Loja de Skins ---
+  const SKINS = [
+    { id: 'olive', name: 'Azeitona', img: '/images/olive.png', price: 0, trailColor: 'rgba(120, 200, 80, ALPHA)', owned: true, emoji: '🪴', description: 'A clássica azeitona verde.' },
+    { id: 'olive_rainbow', name: 'Arco-Íris', img: '/images/skin_olive_rainbow.png', price: 500, trailColor: 'rainbow', owned: false, emoji: '🌈', description: 'Uma azeitona com brilho prismatico!' },
+    { id: 'pear', name: 'Pera', img: '/images/skin_pear.png', price: 300, trailColor: 'rgba(190, 220, 60, ALPHA)', owned: false, emoji: '🍐', description: 'Doce e suculenta.' },
+    { id: 'orange', name: 'Laranja', img: '/images/skin_orange.png', price: 400, trailColor: 'rgba(255, 160, 40, ALPHA)', owned: false, emoji: '🍊', description: 'Vitamina C em forma de heroi.' },
+    { id: 'pepper', name: 'Pimenta', img: '/images/skin_pepper.png', price: 600, trailColor: 'rgba(255, 60, 30, ALPHA)', owned: false, emoji: '🌶️', description: 'Quente demais pra morrer!' },
+  ];
+  const [showSkinShop, setShowSkinShop] = useState(false);
+  const [activeSkinId, setActiveSkinId] = useState('olive');
+  const activeSkinRef = useRef('olive');
+  const [ownedSkins, setOwnedSkins] = useState<string[]>(['olive']);
+  const skinImagesRef = useRef<Record<string, HTMLImageElement>>({});
+  // ---------------------------
+
   const handleOpenRanking = async () => {
     setShowRankingModal(true);
     setLoadingRanking(true);
@@ -478,6 +493,24 @@ const GameEngine = () => {
     magnetImg.src = '/images/ima.png';
     magnetImageRef.current = magnetImg;
 
+    // Pré-carrega TODAS as imagens de skins
+    SKINS.forEach(skin => {
+      const img = new Image();
+      img.src = skin.img;
+      skinImagesRef.current[skin.id] = img;
+    });
+
+    // Restaura skins do localStorage
+    const savedOwned = localStorage.getItem('olivOwnedSkins');
+    if (savedOwned) {
+      try { const parsed = JSON.parse(savedOwned); setOwnedSkins(parsed); } catch { }
+    }
+    const savedActive = localStorage.getItem('olivActiveSkin');
+    if (savedActive) {
+      setActiveSkinId(savedActive);
+      activeSkinRef.current = savedActive;
+    }
+
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
@@ -637,11 +670,24 @@ const GameEngine = () => {
         if (countdownUntil > Date.now()) return;
         player.velocity = player.jumpStrength;
         gameAudio.play('jump');
+        // Trail colorido baseado na skin ativa
+        const skinDef = SKINS.find(s => s.id === activeSkinRef.current);
+        const trailColor = skinDef?.trailColor || 'rgba(120, 200, 80, ALPHA)';
         for (let i = 0; i < 5; i++) {
-          particlePool.spawn(
-            player.x + player.width / 2, player.y + player.height,
-            (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false
-          );
+          if (trailColor === 'rainbow') {
+            const hue = (Date.now() / 5 + i * 40) % 360;
+            particlePool.spawn(
+              player.x + player.width / 2, player.y + player.height,
+              (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
+              `hsla(${hue}, 100%, 60%, ALPHA)`
+            );
+          } else {
+            particlePool.spawn(
+              player.x + player.width / 2, player.y + player.height,
+              (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
+              trailColor
+            );
+          }
         }
       }
     };
@@ -866,20 +912,32 @@ const GameEngine = () => {
         renderY += Math.sin(Date.now() / 200) * 5;
       }
 
-      // Escolhe imagem: neo mode = olive_neo, caso contrário = olive normal
-      const activeOliveImg = neoModeRef.current ? oliveNeoImageRef.current : oliveImageRef.current;
+      // Escolhe imagem: neo mode = olive_neo, skin ativa, ou olive padrão
+      let activeOliveImg: HTMLImageElement | null;
+      if (neoModeRef.current) {
+        activeOliveImg = oliveNeoImageRef.current;
+      } else {
+        activeOliveImg = skinImagesRef.current[activeSkinRef.current] || oliveImageRef.current;
+      }
+
       if (activeOliveImg && activeOliveImg.complete) {
         // Tint verde em modo matrix
         if (neoModeRef.current) {
           ctx.save();
           ctx.filter = 'hue-rotate(80deg) saturate(3) brightness(1.2)';
         }
+        // Efeito arco-íris na skin rainbow
+        if (!neoModeRef.current && activeSkinRef.current === 'olive_rainbow') {
+          ctx.save();
+          const hue = (Date.now() / 10) % 360;
+          ctx.filter = `hue-rotate(${hue}deg) saturate(1.5) brightness(1.1)`;
+        }
         ctx.drawImage(
           activeOliveImg,
           player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight),
           drawWidth, drawHeight
         );
-        if (neoModeRef.current) ctx.restore();
+        if (neoModeRef.current || activeSkinRef.current === 'olive_rainbow') ctx.restore();
       } else {
         ctx.fillStyle = neoModeRef.current ? '#00ff46' : 'white';
         ctx.fillRect(player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight), drawWidth, drawHeight);
@@ -1624,6 +1682,108 @@ const GameEngine = () => {
       )}
       {/* ------------------------------------- */}
 
+      {/* --- NOVO: Modal de Loja de Skins --- */}
+      {showSkinShop && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-5 w-full max-w-lg max-h-[85vh] flex flex-col">
+            <h2 className="text-2xl font-bold text-center text-white mb-1 flex items-center justify-center gap-2">
+              👕 Loja de Skins
+            </h2>
+            <p className="text-center text-yellow-400 text-sm mb-4">Seus Pixels: <span className="font-bold">{displayPixels}</span></p>
+
+            <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3" style={{ minHeight: '200px' }}>
+              {SKINS.map(skin => {
+                const isOwned = ownedSkins.includes(skin.id);
+                const isActive = activeSkinId === skin.id;
+                const canAfford = pixelsRef.current >= skin.price;
+
+                return (
+                  <div
+                    key={skin.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${isActive
+                        ? 'border-green-500 bg-green-900/20 shadow-[0_0_12px_rgba(0,255,70,0.2)]'
+                        : isOwned
+                          ? 'border-gray-600 bg-gray-800/60 hover:bg-gray-800'
+                          : 'border-gray-700 bg-gray-800/30'
+                      }`}
+                  >
+                    {/* Preview da Skin */}
+                    <div className="w-14 h-14 rounded-lg bg-gray-950 border border-gray-700 flex items-center justify-center shrink-0 overflow-hidden">
+                      <img
+                        src={skin.img}
+                        alt={skin.name}
+                        className="w-10 h-10 object-contain"
+                        style={{ imageRendering: 'pixelated' }}
+                      />
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-bold text-sm">{skin.emoji} {skin.name}</span>
+                        {isActive && <span className="text-[9px] bg-green-600 text-white px-1.5 py-0.5 rounded-full font-bold">ATIVA</span>}
+                      </div>
+                      <p className="text-gray-400 text-xs truncate">{skin.description}</p>
+                      {!isOwned && (
+                        <p className="text-yellow-400 text-xs font-bold mt-0.5">{skin.price} Px</p>
+                      )}
+                    </div>
+
+                    {/* Bot&atilde;o */}
+                    <div className="shrink-0">
+                      {isActive ? (
+                        <span className="text-green-400 text-xs font-bold px-3 py-1.5">✓ Equipada</span>
+                      ) : isOwned ? (
+                        <button
+                          onClick={() => { setActiveSkinId(skin.id); activeSkinRef.current = skin.id; localStorage.setItem('olivActiveSkin', skin.id); }}
+                          className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95"
+                        >
+                          Equipar
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            if (!canAfford) { alert(`Voc\u00ea precisa de ${skin.price} Pixels!`); return; }
+                            pixelsRef.current -= skin.price;
+                            setDisplayPixels(pixelsRef.current);
+                            localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+                            if (guestUserRef.current) {
+                              supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
+                            }
+                            const newOwned = [...ownedSkins, skin.id];
+                            setOwnedSkins(newOwned);
+                            localStorage.setItem('olivOwnedSkins', JSON.stringify(newOwned));
+                            setActiveSkinId(skin.id);
+                            activeSkinRef.current = skin.id;
+                            localStorage.setItem('olivActiveSkin', skin.id);
+                          }}
+                          disabled={!canAfford}
+                          className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford
+                              ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                              : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                            }`}
+                        >
+                          Comprar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => setShowSkinShop(false)}
+              className="mt-4 w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition-all active:scale-95"
+            >
+              Fechar Loja
+            </button>
+          </div>
+        </div>
+      )}
+      {/* ---------------------------------- */}
+
+
       {buyModalOpen && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl shadow-2xl w-full max-w-xl flex flex-col gap-4">
@@ -1820,6 +1980,9 @@ const GameEngine = () => {
             High Score: {gameState.highScore}
           </span>
           <div className="flex gap-3 md:gap-6 items-center">
+            <button onClick={() => setShowSkinShop(true)} className="hover:scale-110 transition-transform" title="Loja de Skins">
+              <span className="text-lg md:text-xl">👕</span>
+            </button>
             <button onClick={handleOpenRanking} className="hover:scale-110 transition-transform" title="Ranking Global">
               <img src="/images/icon_trophy.png" alt="Ranking" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
