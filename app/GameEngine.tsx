@@ -257,11 +257,36 @@ const GameEngine = () => {
     if (!ctx) return;
 
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
 
-    let x = isTouch ? (e.touches[0].clientX - rect.left) * scaleX : (e.nativeEvent.offsetX) * scaleX;
-    let y = isTouch ? (e.touches[0].clientY - rect.top) * scaleY : (e.nativeEvent.offsetY) * scaleY;
+    // --- CORREÇÃO DE DISTORÇÃO (Object-Fit e Touch) ---
+    const clientX = isTouch ? e.touches[0].clientX : e.clientX;
+    const clientY = isTouch ? e.touches[0].clientY : e.clientY;
+
+    const canvasAspect = canvas.width / canvas.height;
+    const rectAspect = rect.width / rect.height;
+
+    let renderWidth = rect.width;
+    let renderHeight = rect.height;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (canvasAspect > rectAspect) {
+      renderHeight = rect.width / canvasAspect;
+      offsetY = (rect.height - renderHeight) / 2;
+    } else {
+      renderWidth = rect.height * canvasAspect;
+      offsetX = (rect.width - renderWidth) / 2;
+    }
+
+    const scaleX = canvas.width / renderWidth;
+    const scaleY = canvas.height / renderHeight;
+
+    let x = (clientX - rect.left - offsetX) * scaleX;
+    let y = (clientY - rect.top - offsetY) * scaleY;
+
+    // Se estiver clicando fora da área real da imagem desenhada (nas margens do object-fit), ignora
+    if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return;
+    // ----------------------------------------------------
 
     // MÁGICA DO PIXEL ART: Calcula o "snap" (encaixe) na grade invisível de 10 em 10
     const pixelSize = 10;
@@ -589,15 +614,15 @@ const GameEngine = () => {
         // --- NOVO: Gerador de Artes Livres no Fundo ---
         // Aumenta a chance se a tela estiver vazia para aparecer rápido ao iniciar
         let spawnChance = activeParallaxAds.length === 0 ? 0.05 : 0.005; // 0.5% padrão
-        
+
         if (Math.random() < spawnChance) {
           const adKeys = Object.keys(parallaxImagesRef.current);
           if (adKeys.length > 0) {
             const randomId = parseInt(adKeys[Math.floor(Math.random() * adKeys.length)]);
             const img = parallaxImagesRef.current[randomId];
-            
+
             // Variabilidade de tamanho entre 40% e 80% do tamanho real desenhado
-            const sizeMulti = Math.random() * 0.4 + 0.4; 
+            const sizeMulti = Math.random() * 0.4 + 0.4;
 
             // Respeita a proporção e o tamanho original da imagem (img.width/height)
             const drawWidth = (img.width || 300) * sizeMulti;
@@ -606,7 +631,7 @@ const GameEngine = () => {
             // Se for a primeira arte na tela, nasce colada na borda para não ter delay
             let startX = canvas.width + 100 + (Math.random() * 400);
             if (activeParallaxAds.length === 0) {
-               startX = canvas.width;
+              startX = canvas.width;
             }
 
             activeParallaxAds.push({
@@ -1295,8 +1320,14 @@ const GameEngine = () => {
             <div className="flex justify-center w-full overflow-hidden rounded bg-gray-900 my-2 border border-gray-700">
               {adType === 'obstacle' ? (
                 <div
-                  className="grid w-full h-[120px] cursor-crosshair touch-none shrink-0"
+                  className="grid cursor-crosshair touch-none shrink-0"
                   style={{
+                    width: '100%',
+                    height: 'auto',
+                    maxHeight: '200px',
+                    maxWidth: `calc(200px * (${adCols} / ${adRows}))`,
+                    aspectRatio: `${adCols} / ${adRows}`,
+                    margin: '0 auto',
                     backgroundColor: isTransparentBg ? '#1f2937' : baseColor,
                     backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
                     gridTemplateColumns: `repeat(${adCols}, minmax(0, 1fr))`,
