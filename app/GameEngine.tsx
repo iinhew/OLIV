@@ -519,6 +519,9 @@ const GameEngine = () => {
     ctx.imageSmoothingEnabled = false;
 
     let animationFrameId: number;
+    let lastFrameTime = performance.now();
+    const TARGET_FPS = 60;
+    const TARGET_FRAME_MS = 1000 / TARGET_FPS; // 16.667ms
 
     const player = {
       x: GAME_CONSTANTS.PLAYER_START_X,
@@ -720,19 +723,26 @@ const GameEngine = () => {
 
 
 
-    const render = () => {
+    const render = (timestamp?: number) => {
       if (isGameOver && shakeFrames <= 0) return;
       if (isPaused || view === 'canvas') {
+        lastFrameTime = timestamp || performance.now();
         animationFrameId = window.requestAnimationFrame(render);
         return;
       }
 
+      // --- Delta Time ---
+      const now = timestamp || performance.now();
+      const rawDt = (now - lastFrameTime) / TARGET_FRAME_MS;
+      const dt = Math.min(rawDt, 3); // Limita a 3x para evitar saltos em tab-switch
+      lastFrameTime = now;
+      // ------------------
+
       // --- BULLET TIME (Neo extra-life) ---
       if (bulletTimeRef.current > 0) {
-        bulletTimeRef.current--;
+        bulletTimeRef.current -= dt;
         animationFrameId = window.requestAnimationFrame(render);
-        // Slow motion: renderiza apenas 1 em cada 3 frames
-        if (bulletTimeRef.current % 3 !== 0) return;
+        if (bulletTimeRef.current > 0 && Math.floor(bulletTimeRef.current) % 3 !== 0) return;
       }
       // ------------------------------------
 
@@ -758,7 +768,7 @@ const GameEngine = () => {
 
       if (shakeFrames > 0) {
         ctx.translate(Math.random() * 10 - 5, Math.random() * 10 - 5);
-        shakeFrames--;
+        shakeFrames -= dt;
       }
 
       // 1. Fundo: modo Matrix (Neo) ou estrelas normais
@@ -773,8 +783,8 @@ const GameEngine = () => {
         ctx.font = 'bold 14px monospace';
         matrixDrops.forEach(drop => {
           if (isPhysicsActive || isGameOver) {
-            drop.y += drop.speed * 0.5;
-            drop.x -= (isPhysicsActive ? gameSpeed : 3) * 0.4;
+            drop.y += drop.speed * 0.5 * dt;
+            drop.x -= (isPhysicsActive ? gameSpeed : 3) * 0.4 * dt;
             if (drop.y > canvas.height) {
               drop.y = -14;
               drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
@@ -791,7 +801,7 @@ const GameEngine = () => {
       } else {
         parallaxLayers.forEach(layer => {
           layer.stars.forEach(star => {
-            if (isPhysicsActive) star.x -= gameSpeed * layer.speed;
+            if (isPhysicsActive) star.x -= gameSpeed * layer.speed * dt;
             if (star.x < 0) { star.x = canvas.width; star.y = Math.random() * canvas.height; }
             ctx.fillStyle = layer.color;
             ctx.fillRect(star.x, star.y, star.size, star.size);
@@ -801,13 +811,13 @@ const GameEngine = () => {
 
       // 2. Lógica de Física e Geração de Artes de Fundo (Parallax Ads)
       if (isPhysicsActive) {
-        player.velocity += player.gravity;
-        player.y += player.velocity;
-        score += 0.05;
+        player.velocity += player.gravity * dt;
+        player.y += player.velocity * dt;
+        score += 0.05 * dt;
         gameSpeed = 3 + (score / 150);
 
         if (player.rocketTimer > 0) {
-          player.rocketTimer--;
+          player.rocketTimer -= dt;
           particlePool.spawn(
             player.x + player.width / 2 + (Math.random() - 0.5) * 10,
             player.y + player.height,
@@ -884,7 +894,7 @@ const GameEngine = () => {
       // 3. Renderiza as Artes Livres (Parallax) ATRÁS dos obstáculos
       for (let i = activeParallaxAds.length - 1; i >= 0; i--) {
         let ad = activeParallaxAds[i];
-        if (isPhysicsActive) ad.x -= ad.speed;
+        if (isPhysicsActive) ad.x -= ad.speed * dt;
 
         if (ad.img && ad.img.complete) {
           ctx.globalAlpha = Math.min(ad.alpha, 1);
@@ -970,7 +980,7 @@ const GameEngine = () => {
 
       // 6. Renderização de Partículas
       // 6. Atualização e Renderização das Partículas
-      particlePool.updateAndDraw(ctx);
+      particlePool.updateAndDraw(ctx, dt);
 
       // 7. Renderização dos Obstáculos Físicos
       for (let i = obstacles.length - 1; i >= 0; i--) {
@@ -981,13 +991,13 @@ const GameEngine = () => {
             const dy = (renderY + player.height / 2) - (obs.y + obs.height / 2);
             const dist = Math.sqrt(dx * dx + dy * dy);
             if (dist < 400) {
-              obs.x += (dx / dist) * 12;
-              obs.y += (dy / dist) * 12;
+              obs.x += (dx / dist) * 12 * dt;
+              obs.y += (dy / dist) * 12 * dt;
             } else {
-              obs.x -= gameSpeed;
+              obs.x -= gameSpeed * dt;
             }
           } else {
-            obs.x -= gameSpeed;
+            obs.x -= gameSpeed * dt;
           }
         }
 
@@ -1701,10 +1711,10 @@ const GameEngine = () => {
                   <div
                     key={skin.id}
                     className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${isActive
-                        ? 'border-green-500 bg-green-900/20 shadow-[0_0_12px_rgba(0,255,70,0.2)]'
-                        : isOwned
-                          ? 'border-gray-600 bg-gray-800/60 hover:bg-gray-800'
-                          : 'border-gray-700 bg-gray-800/30'
+                      ? 'border-green-500 bg-green-900/20 shadow-[0_0_12px_rgba(0,255,70,0.2)]'
+                      : isOwned
+                        ? 'border-gray-600 bg-gray-800/60 hover:bg-gray-800'
+                        : 'border-gray-700 bg-gray-800/30'
                       }`}
                   >
                     {/* Preview da Skin */}
@@ -1759,8 +1769,8 @@ const GameEngine = () => {
                           }}
                           disabled={!canAfford}
                           className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford
-                              ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
-                              : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                            ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                            : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                             }`}
                         >
                           Comprar
