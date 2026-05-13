@@ -55,6 +55,21 @@ const GameEngine = () => {
   const vazioTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // ----------------------------------------
 
+  // --- NOVO: Loja de Skins ---
+  const SKINS = [
+    { id: 'olive', name: 'Azeitona', img: '/images/olive.png', price: 0, trailColor: 'rgba(120, 200, 80, ALPHA)', owned: true, emoji: '🪴', description: 'A clássica azeitona verde.' },
+    { id: 'olive_rainbow', name: 'Arco-Íris', img: '/images/skin_olive_rainbow.png', price: 500, trailColor: 'rainbow', owned: false, emoji: '🌈', description: 'Uma azeitona com brilho prismatico!' },
+    { id: 'pear', name: 'Pera', img: '/images/skin_pear.png', price: 300, trailColor: 'rgba(190, 220, 60, ALPHA)', owned: false, emoji: '🍐', description: 'Doce e suculenta.' },
+    { id: 'orange', name: 'Laranja', img: '/images/skin_orange.png', price: 400, trailColor: 'rgba(255, 160, 40, ALPHA)', owned: false, emoji: '🍊', description: 'Vitamina C em forma de heroi.' },
+    { id: 'pepper', name: 'Pimenta', img: '/images/skin_pepper.png', price: 600, trailColor: 'rgba(255, 60, 30, ALPHA)', owned: false, emoji: '🌶️', description: 'Quente demais pra morrer!' },
+  ];
+  const [showSkinShop, setShowSkinShop] = useState(false);
+  const [activeSkinId, setActiveSkinId] = useState('olive');
+  const activeSkinRef = useRef('olive');
+  const [ownedSkins, setOwnedSkins] = useState<string[]>(['olive']);
+  const skinImagesRef = useRef<Record<string, HTMLImageElement>>({});
+  // ---------------------------
+
   const handleOpenRanking = async () => {
     setShowRankingModal(true);
     setLoadingRanking(true);
@@ -478,6 +493,24 @@ const GameEngine = () => {
     magnetImg.src = '/images/ima.png';
     magnetImageRef.current = magnetImg;
 
+    // Pré-carrega TODAS as imagens de skins
+    SKINS.forEach(skin => {
+      const img = new Image();
+      img.src = skin.img;
+      skinImagesRef.current[skin.id] = img;
+    });
+
+    // Restaura skins do localStorage
+    const savedOwned = localStorage.getItem('olivOwnedSkins');
+    if (savedOwned) {
+      try { const parsed = JSON.parse(savedOwned); setOwnedSkins(parsed); } catch { }
+    }
+    const savedActive = localStorage.getItem('olivActiveSkin');
+    if (savedActive) {
+      setActiveSkinId(savedActive);
+      activeSkinRef.current = savedActive;
+    }
+
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
@@ -486,6 +519,9 @@ const GameEngine = () => {
     ctx.imageSmoothingEnabled = false;
 
     let animationFrameId: number;
+    let lastFrameTime = performance.now();
+    const TARGET_FPS = 60;
+    const TARGET_FRAME_MS = 1000 / TARGET_FPS; // 16.667ms
 
     const player = {
       x: GAME_CONSTANTS.PLAYER_START_X,
@@ -519,13 +555,15 @@ const GameEngine = () => {
     // ---------------------------------
 
     let obstacles: any[] = [];
-    const particlePool = new ParticlePool(200);
+    const isMobile = canvas.width < 768;
+    const particlePool = new ParticlePool(isMobile ? 80 : 200);
     let activeParallaxAds: any[] = [];
 
-    // Mais estrelas para cobrir monitores grandes
+    // Menos estrelas no mobile para melhor performance
+    const starCount = isMobile ? 20 : 60;
     let parallaxLayers = [
-      { stars: Array.from({ length: 60 }).map(() => ({ x: Math.random() * 2000, y: Math.random() * 1500, size: 1.5 })), speed: 0.2, color: '#4b5563' },
-      { stars: Array.from({ length: 30 }).map(() => ({ x: Math.random() * 2000, y: Math.random() * 1500, size: 2.5 })), speed: 0.5, color: '#9ca3af' }
+      { stars: Array.from({ length: starCount }).map(() => ({ x: Math.random() * 2000, y: Math.random() * 1500, size: 1.5 })), speed: 0.2, color: '#4b5563' },
+      { stars: Array.from({ length: Math.floor(starCount * 0.5) }).map(() => ({ x: Math.random() * 2000, y: Math.random() * 1500, size: 2.5 })), speed: 0.5, color: '#9ca3af' },
     ];
 
     let hasStarted = false;
@@ -542,7 +580,8 @@ const GameEngine = () => {
     const matrixChars = '01ABCDEFNEOMATRIX';
     let matrixDrops: { x: number, y: number, speed: number, char: string, alpha: number }[] = [];
     const initMatrixDrops = (w: number, h: number) => {
-      matrixDrops = Array.from({ length: 60 }, () => ({
+      const dropCount = isMobile ? 20 : 60;
+      matrixDrops = Array.from({ length: dropCount }, () => ({
         x: Math.random() * w, y: Math.random() * h,
         speed: 1 + Math.random() * 3,
         char: matrixChars[Math.floor(Math.random() * matrixChars.length)],
@@ -637,11 +676,24 @@ const GameEngine = () => {
         if (countdownUntil > Date.now()) return;
         player.velocity = player.jumpStrength;
         gameAudio.play('jump');
+        // Trail colorido baseado na skin ativa
+        const skinDef = SKINS.find(s => s.id === activeSkinRef.current);
+        const trailColor = skinDef?.trailColor || 'rgba(120, 200, 80, ALPHA)';
         for (let i = 0; i < 5; i++) {
-          particlePool.spawn(
-            player.x + player.width / 2, player.y + player.height,
-            (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false
-          );
+          if (trailColor === 'rainbow') {
+            const hue = (Date.now() / 5 + i * 40) % 360;
+            particlePool.spawn(
+              player.x + player.width / 2, player.y + player.height,
+              (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
+              `hsla(${hue}, 100%, 60%, ALPHA)`
+            );
+          } else {
+            particlePool.spawn(
+              player.x + player.width / 2, player.y + player.height,
+              (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
+              trailColor
+            );
+          }
         }
       }
     };
@@ -674,19 +726,26 @@ const GameEngine = () => {
 
 
 
-    const render = () => {
+    const render = (timestamp?: number) => {
       if (isGameOver && shakeFrames <= 0) return;
       if (isPaused || view === 'canvas') {
+        lastFrameTime = timestamp || performance.now();
         animationFrameId = window.requestAnimationFrame(render);
         return;
       }
 
+      // --- Delta Time ---
+      const now = timestamp || performance.now();
+      const rawDt = (now - lastFrameTime) / TARGET_FRAME_MS;
+      const dt = Math.min(rawDt, 3); // Limita a 3x para evitar saltos em tab-switch
+      lastFrameTime = now;
+      // ------------------
+
       // --- BULLET TIME (Neo extra-life) ---
       if (bulletTimeRef.current > 0) {
-        bulletTimeRef.current--;
+        bulletTimeRef.current -= dt;
         animationFrameId = window.requestAnimationFrame(render);
-        // Slow motion: renderiza apenas 1 em cada 3 frames
-        if (bulletTimeRef.current % 3 !== 0) return;
+        if (bulletTimeRef.current > 0 && Math.floor(bulletTimeRef.current) % 3 !== 0) return;
       }
       // ------------------------------------
 
@@ -712,7 +771,7 @@ const GameEngine = () => {
 
       if (shakeFrames > 0) {
         ctx.translate(Math.random() * 10 - 5, Math.random() * 10 - 5);
-        shakeFrames--;
+        shakeFrames -= dt;
       }
 
       // 1. Fundo: modo Matrix (Neo) ou estrelas normais
@@ -727,8 +786,8 @@ const GameEngine = () => {
         ctx.font = 'bold 14px monospace';
         matrixDrops.forEach(drop => {
           if (isPhysicsActive || isGameOver) {
-            drop.y += drop.speed * 0.5;
-            drop.x -= (isPhysicsActive ? gameSpeed : 3) * 0.4;
+            drop.y += drop.speed * 0.5 * dt;
+            drop.x -= (isPhysicsActive ? gameSpeed : 3) * 0.4 * dt;
             if (drop.y > canvas.height) {
               drop.y = -14;
               drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
@@ -745,7 +804,7 @@ const GameEngine = () => {
       } else {
         parallaxLayers.forEach(layer => {
           layer.stars.forEach(star => {
-            if (isPhysicsActive) star.x -= gameSpeed * layer.speed;
+            if (isPhysicsActive) star.x -= gameSpeed * layer.speed * dt;
             if (star.x < 0) { star.x = canvas.width; star.y = Math.random() * canvas.height; }
             ctx.fillStyle = layer.color;
             ctx.fillRect(star.x, star.y, star.size, star.size);
@@ -755,13 +814,13 @@ const GameEngine = () => {
 
       // 2. Lógica de Física e Geração de Artes de Fundo (Parallax Ads)
       if (isPhysicsActive) {
-        player.velocity += player.gravity;
-        player.y += player.velocity;
-        score += 0.05;
+        player.velocity += player.gravity * dt;
+        player.y += player.velocity * dt;
+        score += 0.05 * dt;
         gameSpeed = 3 + (score / 150);
 
         if (player.rocketTimer > 0) {
-          player.rocketTimer--;
+          player.rocketTimer -= dt;
           particlePool.spawn(
             player.x + player.width / 2 + (Math.random() - 0.5) * 10,
             player.y + player.height,
@@ -838,7 +897,7 @@ const GameEngine = () => {
       // 3. Renderiza as Artes Livres (Parallax) ATRÁS dos obstáculos
       for (let i = activeParallaxAds.length - 1; i >= 0; i--) {
         let ad = activeParallaxAds[i];
-        if (isPhysicsActive) ad.x -= ad.speed;
+        if (isPhysicsActive) ad.x -= ad.speed * dt;
 
         if (ad.img && ad.img.complete) {
           ctx.globalAlpha = Math.min(ad.alpha, 1);
@@ -866,20 +925,34 @@ const GameEngine = () => {
         renderY += Math.sin(Date.now() / 200) * 5;
       }
 
-      // Escolhe imagem: neo mode = olive_neo, caso contrário = olive normal
-      const activeOliveImg = neoModeRef.current ? oliveNeoImageRef.current : oliveImageRef.current;
+      // Escolhe imagem: neo mode = olive_neo, skin ativa, ou olive padrão
+      let activeOliveImg: HTMLImageElement | null;
+      if (neoModeRef.current) {
+        activeOliveImg = oliveNeoImageRef.current;
+      } else {
+        activeOliveImg = skinImagesRef.current[activeSkinRef.current] || oliveImageRef.current;
+      }
+
       if (activeOliveImg && activeOliveImg.complete) {
         // Tint verde em modo matrix
         if (neoModeRef.current) {
           ctx.save();
-          ctx.filter = 'hue-rotate(80deg) saturate(3) brightness(1.2)';
+          if (!isMobile) ctx.filter = 'hue-rotate(80deg) saturate(3) brightness(1.2)';
+        }
+        // Efeito arco-íris na skin rainbow (simplificado no mobile)
+        if (!neoModeRef.current && activeSkinRef.current === 'olive_rainbow') {
+          ctx.save();
+          if (!isMobile) {
+            const hue = (Date.now() / 10) % 360;
+            ctx.filter = `hue-rotate(${hue}deg) saturate(1.5) brightness(1.1)`;
+          }
         }
         ctx.drawImage(
           activeOliveImg,
           player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight),
           drawWidth, drawHeight
         );
-        if (neoModeRef.current) ctx.restore();
+        if (neoModeRef.current || activeSkinRef.current === 'olive_rainbow') ctx.restore();
       } else {
         ctx.fillStyle = neoModeRef.current ? '#00ff46' : 'white';
         ctx.fillRect(player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight), drawWidth, drawHeight);
@@ -912,7 +985,7 @@ const GameEngine = () => {
 
       // 6. Renderização de Partículas
       // 6. Atualização e Renderização das Partículas
-      particlePool.updateAndDraw(ctx);
+      particlePool.updateAndDraw(ctx, dt);
 
       // 7. Renderização dos Obstáculos Físicos
       for (let i = obstacles.length - 1; i >= 0; i--) {
@@ -923,13 +996,13 @@ const GameEngine = () => {
             const dy = (renderY + player.height / 2) - (obs.y + obs.height / 2);
             const dist = Math.sqrt(dx * dx + dy * dy);
             if (dist < 400) {
-              obs.x += (dx / dist) * 12;
-              obs.y += (dy / dist) * 12;
+              obs.x += (dx / dist) * 12 * dt;
+              obs.y += (dy / dist) * 12 * dt;
             } else {
-              obs.x -= gameSpeed;
+              obs.x -= gameSpeed * dt;
             }
           } else {
-            obs.x -= gameSpeed;
+            obs.x -= gameSpeed * dt;
           }
         }
 
@@ -1624,6 +1697,108 @@ const GameEngine = () => {
       )}
       {/* ------------------------------------- */}
 
+      {/* --- NOVO: Modal de Loja de Skins --- */}
+      {showSkinShop && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-5 w-full max-w-lg max-h-[85vh] flex flex-col">
+            <h2 className="text-2xl font-bold text-center text-white mb-1 flex items-center justify-center gap-2">
+              👕 Loja de Skins
+            </h2>
+            <p className="text-center text-yellow-400 text-sm mb-4">Seus Pixels: <span className="font-bold">{displayPixels}</span></p>
+
+            <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3" style={{ minHeight: '200px' }}>
+              {SKINS.map(skin => {
+                const isOwned = ownedSkins.includes(skin.id);
+                const isActive = activeSkinId === skin.id;
+                const canAfford = pixelsRef.current >= skin.price;
+
+                return (
+                  <div
+                    key={skin.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${isActive
+                      ? 'border-green-500 bg-green-900/20 shadow-[0_0_12px_rgba(0,255,70,0.2)]'
+                      : isOwned
+                        ? 'border-gray-600 bg-gray-800/60 hover:bg-gray-800'
+                        : 'border-gray-700 bg-gray-800/30'
+                      }`}
+                  >
+                    {/* Preview da Skin */}
+                    <div className="w-14 h-14 rounded-lg bg-gray-950 border border-gray-700 flex items-center justify-center shrink-0 overflow-hidden">
+                      <img
+                        src={skin.img}
+                        alt={skin.name}
+                        className="w-10 h-10 object-contain"
+                        style={{ imageRendering: 'pixelated' }}
+                      />
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-bold text-sm">{skin.emoji} {skin.name}</span>
+                        {isActive && <span className="text-[9px] bg-green-600 text-white px-1.5 py-0.5 rounded-full font-bold">ATIVA</span>}
+                      </div>
+                      <p className="text-gray-400 text-xs truncate">{skin.description}</p>
+                      {!isOwned && (
+                        <p className="text-yellow-400 text-xs font-bold mt-0.5">{skin.price} Px</p>
+                      )}
+                    </div>
+
+                    {/* Bot&atilde;o */}
+                    <div className="shrink-0">
+                      {isActive ? (
+                        <span className="text-green-400 text-xs font-bold px-3 py-1.5">✓ Equipada</span>
+                      ) : isOwned ? (
+                        <button
+                          onClick={() => { setActiveSkinId(skin.id); activeSkinRef.current = skin.id; localStorage.setItem('olivActiveSkin', skin.id); }}
+                          className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95"
+                        >
+                          Equipar
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            if (!canAfford) { alert(`Voc\u00ea precisa de ${skin.price} Pixels!`); return; }
+                            pixelsRef.current -= skin.price;
+                            setDisplayPixels(pixelsRef.current);
+                            localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+                            if (guestUserRef.current) {
+                              supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
+                            }
+                            const newOwned = [...ownedSkins, skin.id];
+                            setOwnedSkins(newOwned);
+                            localStorage.setItem('olivOwnedSkins', JSON.stringify(newOwned));
+                            setActiveSkinId(skin.id);
+                            activeSkinRef.current = skin.id;
+                            localStorage.setItem('olivActiveSkin', skin.id);
+                          }}
+                          disabled={!canAfford}
+                          className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford
+                            ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                            : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                            }`}
+                        >
+                          Comprar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => setShowSkinShop(false)}
+              className="mt-4 w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition-all active:scale-95"
+            >
+              Fechar Loja
+            </button>
+          </div>
+        </div>
+      )}
+      {/* ---------------------------------- */}
+
+
       {buyModalOpen && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl shadow-2xl w-full max-w-xl flex flex-col gap-4">
@@ -1820,6 +1995,9 @@ const GameEngine = () => {
             High Score: {gameState.highScore}
           </span>
           <div className="flex gap-3 md:gap-6 items-center">
+            <button onClick={() => setShowSkinShop(true)} className="hover:scale-110 transition-transform" title="Loja de Skins">
+              <span className="text-lg md:text-xl">👕</span>
+            </button>
             <button onClick={handleOpenRanking} className="hover:scale-110 transition-transform" title="Ranking Global">
               <img src="/images/icon_trophy.png" alt="Ranking" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
@@ -1909,8 +2087,29 @@ const GameEngine = () => {
           }
         `}</style>
 
+        {/* Injetar estilos CRT - simplificados no mobile */}
+        <style>{`
+          .crt-mobile-simple .crt-scanlines,
+          .crt-mobile-simple .crt-moving-line,
+          .crt-mobile-simple .crt-glitch-layer {
+            animation: none !important;
+          }
+          .crt-mobile-simple .crt-scanlines {
+            background-size: 100% 6px;
+            opacity: 0.3;
+          }
+          .crt-mobile-simple .crt-aberration {
+            filter: none !important;
+          }
+          .crt-mobile-simple.crt-container {
+            animation: none !important;
+            transform: none !important;
+            box-shadow: inset 0 0 30px rgba(0,0,0,0.8);
+          }
+        `}</style>
+
         <div className="flex-1 w-full p-2 md:p-6 flex flex-col relative bg-black items-center justify-center">
-          <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-[#0f172a] crt-container shadow-[0_0_50px_rgba(59,130,246,0.15)] border-2 border-gray-900">
+          <div ref={containerRef} className={`w-full h-full relative overflow-hidden bg-[#0f172a] crt-container shadow-[0_0_50px_rgba(59,130,246,0.15)] border-2 border-gray-900 ${typeof window !== 'undefined' && window.innerWidth < 768 ? 'crt-mobile-simple' : ''}`}>
             <div className="crt-glitch-layer absolute inset-0">
               <canvas
                 ref={canvasRef}
@@ -1923,7 +2122,7 @@ const GameEngine = () => {
             <div className="crt-vignette" />
 
             {!gameState.hasStarted && !gameState.gameOver && (
-              <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none">
+              <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-30 pointer-events-none">
                 <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-2 tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-green-400 text-center">OLIV</h2>
                 <p className="text-gray-300 text-sm md:text-xl mb-8 text-center px-4">Navegue pelo canvas e conquiste território.</p>
                 <p className="text-white bg-blue-600 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
@@ -1933,7 +2132,7 @@ const GameEngine = () => {
             )}
 
             {gameState.isPaused && !gameState.gameOver && (
-              <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-30 backdrop-blur-md pointer-events-none">
+              <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-30 pointer-events-none">
                 <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-4 tracking-widest">PAUSADO</h2>
                 <p className="text-gray-300 md:text-xl">Toque no botão ⏸️ ou pressione <kbd className="font-bold text-yellow-400">P</kbd></p>
               </div>
