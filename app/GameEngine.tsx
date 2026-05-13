@@ -1255,7 +1255,7 @@ const GameEngine = () => {
           rows = parseInt(parts[2]);
 
           isBreakable = Math.random() < 0.15;
-          isBouncy = !isBreakable && Math.random() < 0.15;
+          isBouncy = !isBreakable && Math.random() < 0.05;
         }
 
         const brandHeight = brand ? rows * 5 : 40;
