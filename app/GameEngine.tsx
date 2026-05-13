@@ -19,7 +19,7 @@ interface CustomBrand {
 const GameEngine = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null); // Ref para o container pai
-  const [view, setView] = useState<'game' | 'canvas'>('game');
+  const [view, setView] = useState<'game' | 'canvas' | 'brecho'>('game');
 
   // --- NOVO: Guest & Auth Session ---
   const [showGuestModal, setShowGuestModal] = useState(true);
@@ -728,7 +728,7 @@ const GameEngine = () => {
 
     const render = (timestamp?: number) => {
       if (isGameOver && shakeFrames <= 0) return;
-      if (isPaused || view === 'canvas') {
+      if (isPaused || view === 'canvas' || view === 'brecho') {
         lastFrameTime = timestamp || performance.now();
         animationFrameId = window.requestAnimationFrame(render);
         return;
@@ -1502,13 +1502,19 @@ const GameEngine = () => {
           onClick={() => { setView('canvas'); setDisplayPixels(pixelsRef.current); }}
           className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'canvas' ? 'bg-gray-800 text-white border-b-2 border-blue-500' : 'text-gray-500 hover:text-white'}`}
         >
-          Vista do Canvas
+          Mural
         </button>
         <button
           onClick={() => setView('game')}
           className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'game' ? 'bg-gray-800 text-white border-b-2 border-green-500' : 'text-gray-500 hover:text-white'}`}
         >
-          Vista do Jogo
+          Jogo
+        </button>
+        <button
+          onClick={() => { setView('brecho'); setDisplayPixels(pixelsRef.current); }}
+          className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'brecho' ? 'bg-gray-800 text-white border-b-2 border-yellow-500' : 'text-gray-500 hover:text-white'}`}
+        >
+          Brechó
         </button>
       </div>
 
@@ -1697,106 +1703,119 @@ const GameEngine = () => {
       )}
       {/* ------------------------------------- */}
 
-      {/* --- NOVO: Modal de Loja de Skins --- */}
-      {showSkinShop && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-5 w-full max-w-lg max-h-[85vh] flex flex-col">
-            <h2 className="text-2xl font-bold text-center text-white mb-1 flex items-center justify-center gap-2">
-              👕 Loja de Skins
+      {/* --- Vista do Brechó (Loja de Skins) --- */}
+      <div className={`flex-1 w-full flex flex-col items-center px-4 md:px-8 py-4 overflow-y-auto ${view === 'brecho' ? 'flex' : 'hidden'}`}>
+        <div className="w-full max-w-lg flex flex-col gap-4">
+          <div className="text-center">
+            <h2 className="text-2xl md:text-3xl font-extrabold text-white mb-1 flex items-center justify-center gap-2">
+              👕 Brechó
             </h2>
-            <p className="text-center text-yellow-400 text-sm mb-4">Seus Pixels: <span className="font-bold">{displayPixels}</span></p>
-
-            <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3" style={{ minHeight: '200px' }}>
-              {SKINS.map(skin => {
-                const isOwned = ownedSkins.includes(skin.id);
-                const isActive = activeSkinId === skin.id;
-                const canAfford = pixelsRef.current >= skin.price;
-
-                return (
-                  <div
-                    key={skin.id}
-                    className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${isActive
-                      ? 'border-green-500 bg-green-900/20 shadow-[0_0_12px_rgba(0,255,70,0.2)]'
-                      : isOwned
-                        ? 'border-gray-600 bg-gray-800/60 hover:bg-gray-800'
-                        : 'border-gray-700 bg-gray-800/30'
-                      }`}
-                  >
-                    {/* Preview da Skin */}
-                    <div className="w-14 h-14 rounded-lg bg-gray-950 border border-gray-700 flex items-center justify-center shrink-0 overflow-hidden">
-                      <img
-                        src={skin.img}
-                        alt={skin.name}
-                        className="w-10 h-10 object-contain"
-                        style={{ imageRendering: 'pixelated' }}
-                      />
-                    </div>
-
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-bold text-sm">{skin.emoji} {skin.name}</span>
-                        {isActive && <span className="text-[9px] bg-green-600 text-white px-1.5 py-0.5 rounded-full font-bold">ATIVA</span>}
-                      </div>
-                      <p className="text-gray-400 text-xs truncate">{skin.description}</p>
-                      {!isOwned && (
-                        <p className="text-yellow-400 text-xs font-bold mt-0.5">{skin.price} Px</p>
-                      )}
-                    </div>
-
-                    {/* Bot&atilde;o */}
-                    <div className="shrink-0">
-                      {isActive ? (
-                        <span className="text-green-400 text-xs font-bold px-3 py-1.5">✓ Equipada</span>
-                      ) : isOwned ? (
-                        <button
-                          onClick={() => { setActiveSkinId(skin.id); activeSkinRef.current = skin.id; localStorage.setItem('olivActiveSkin', skin.id); }}
-                          className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95"
-                        >
-                          Equipar
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            if (!canAfford) { alert(`Voc\u00ea precisa de ${skin.price} Pixels!`); return; }
-                            pixelsRef.current -= skin.price;
-                            setDisplayPixels(pixelsRef.current);
-                            localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
-                            if (guestUserRef.current) {
-                              supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
-                            }
-                            const newOwned = [...ownedSkins, skin.id];
-                            setOwnedSkins(newOwned);
-                            localStorage.setItem('olivOwnedSkins', JSON.stringify(newOwned));
-                            setActiveSkinId(skin.id);
-                            activeSkinRef.current = skin.id;
-                            localStorage.setItem('olivActiveSkin', skin.id);
-                          }}
-                          disabled={!canAfford}
-                          className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford
-                            ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
-                            : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                            }`}
-                        >
-                          Comprar
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <button
-              onClick={() => setShowSkinShop(false)}
-              className="mt-4 w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition-all active:scale-95"
-            >
-              Fechar Loja
-            </button>
+            <p className="text-gray-400 text-xs md:text-sm">Equipe skins exclusivas para sua azeitona!</p>
+            <p className="text-yellow-400 text-sm font-bold mt-2">Seus Pixels: <span className="text-lg">{displayPixels}</span></p>
           </div>
+
+          {/* Skin Equipada - Destaque */}
+          <div className="bg-gradient-to-r from-green-900/40 to-emerald-900/40 border border-green-600/50 rounded-xl p-4 flex items-center gap-4">
+            <div className="w-16 h-16 rounded-xl bg-gray-950 border-2 border-green-500 flex items-center justify-center overflow-hidden shadow-[0_0_15px_rgba(0,255,70,0.3)]">
+              <img
+                src={SKINS.find(s => s.id === activeSkinId)?.img || '/images/olive.png'}
+                alt="Skin Ativa"
+                className="w-12 h-12 object-contain"
+                style={{ imageRendering: 'pixelated' }}
+              />
+            </div>
+            <div>
+              <p className="text-green-400 text-[10px] font-bold uppercase tracking-wider">Skin Equipada</p>
+              <p className="text-white font-bold text-lg">{SKINS.find(s => s.id === activeSkinId)?.emoji} {SKINS.find(s => s.id === activeSkinId)?.name}</p>
+            </div>
+          </div>
+
+          {/* Lista de Skins */}
+          <div className="flex flex-col gap-3">
+            {SKINS.map(skin => {
+              const isOwned = ownedSkins.includes(skin.id);
+              const isActive = activeSkinId === skin.id;
+              const canAfford = pixelsRef.current >= skin.price;
+
+              return (
+                <div
+                  key={skin.id}
+                  className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${isActive
+                    ? 'border-green-500 bg-green-900/20 shadow-[0_0_12px_rgba(0,255,70,0.2)]'
+                    : isOwned
+                      ? 'border-gray-600 bg-gray-800/60 hover:bg-gray-800'
+                      : 'border-gray-700 bg-gray-800/30 hover:bg-gray-800/50'
+                    }`}
+                >
+                  {/* Preview da Skin */}
+                  <div className="w-14 h-14 rounded-lg bg-gray-950 border border-gray-700 flex items-center justify-center shrink-0 overflow-hidden">
+                    <img
+                      src={skin.img}
+                      alt={skin.name}
+                      className="w-10 h-10 object-contain"
+                      style={{ imageRendering: 'pixelated' }}
+                    />
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-bold text-sm">{skin.emoji} {skin.name}</span>
+                      {isActive && <span className="text-[9px] bg-green-600 text-white px-1.5 py-0.5 rounded-full font-bold">ATIVA</span>}
+                      {isOwned && !isActive && <span className="text-[9px] bg-gray-600 text-gray-300 px-1.5 py-0.5 rounded-full font-bold">DESBLOQUEADA</span>}
+                    </div>
+                    <p className="text-gray-400 text-xs">{skin.description}</p>
+                    {!isOwned && (
+                      <p className="text-yellow-400 text-xs font-bold mt-0.5">💰 {skin.price} Px</p>
+                    )}
+                  </div>
+
+                  {/* Botão */}
+                  <div className="shrink-0">
+                    {isActive ? (
+                      <span className="text-green-400 text-xs font-bold px-3 py-1.5">✓ Equipada</span>
+                    ) : isOwned ? (
+                      <button
+                        onClick={() => { setActiveSkinId(skin.id); activeSkinRef.current = skin.id; localStorage.setItem('olivActiveSkin', skin.id); }}
+                        className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95"
+                      >
+                        Equipar
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          if (!canAfford) return;
+                          pixelsRef.current -= skin.price;
+                          setDisplayPixels(pixelsRef.current);
+                          localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+                          if (guestUserRef.current) {
+                            supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
+                          }
+                          const newOwned = [...ownedSkins, skin.id];
+                          setOwnedSkins(newOwned);
+                          localStorage.setItem('olivOwnedSkins', JSON.stringify(newOwned));
+                          setActiveSkinId(skin.id);
+                          activeSkinRef.current = skin.id;
+                          localStorage.setItem('olivActiveSkin', skin.id);
+                        }}
+                        disabled={!canAfford}
+                        className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford
+                          ? 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg shadow-yellow-600/20'
+                          : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                          }`}
+                      >
+                        Comprar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="text-gray-600 text-[10px] text-center mt-2">Mais skins em breve... 👀</p>
         </div>
-      )}
-      {/* ---------------------------------- */}
+      </div>
 
 
       {buyModalOpen && (
@@ -1995,9 +2014,7 @@ const GameEngine = () => {
             High Score: {gameState.highScore}
           </span>
           <div className="flex gap-3 md:gap-6 items-center">
-            <button onClick={() => setShowSkinShop(true)} className="hover:scale-110 transition-transform" title="Loja de Skins">
-              <span className="text-lg md:text-xl">👕</span>
-            </button>
+
             <button onClick={handleOpenRanking} className="hover:scale-110 transition-transform" title="Ranking Global">
               <img src="/images/icon_trophy.png" alt="Ranking" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
