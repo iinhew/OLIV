@@ -45,11 +45,14 @@ const GameEngine = () => {
   // --- NOVO: Easter Egg Konami / Modo Neo ---
   const [neoMode, setNeoMode] = useState(false);
   const neoModeRef = useRef(false);
-  const neoExtraLifeRef = useRef(0); // 0 = sem extra life, 1 = tem vida extra
-  const bulletTimeRef = useRef(0);   // frames de bullet time restantes
+  const neoExtraLifeRef = useRef(0);
+  const bulletTimeRef = useRef(0);
   const konamiSequenceRef = useRef<string[]>([]);
   const KONAMI_CODE = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
   const oliveNeoImageRef = useRef<HTMLImageElement | null>(null);
+  const [vazioTapCount, setVazioTapCount] = useState(0);
+  const [dpadUnlocked, setDpadUnlocked] = useState(false);
+  const vazioTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // ----------------------------------------
 
   const handleOpenRanking = async () => {
@@ -1533,27 +1536,53 @@ const GameEngine = () => {
               );
             })}
           </div>
-          <p className="text-gray-500 text-xs mt-4 text-center">Clique em um espaço vazio para abrir o estúdio de Pixel Art!</p>
+          <p className="text-gray-500 text-xs mt-4 text-center">
+            Clique em um espaço{' '}
+            <span
+              onPointerDown={() => {
+                if (dpadUnlocked) return;
+                if (vazioTimerRef.current) clearTimeout(vazioTimerRef.current);
+                const next = vazioTapCount + 1;
+                setVazioTapCount(next);
+                if (next >= 7) {
+                  setDpadUnlocked(true);
+                  setVazioTapCount(0);
+                } else {
+                  vazioTimerRef.current = setTimeout(() => setVazioTapCount(0), 2500);
+                }
+              }}
+              className={`cursor-pointer select-none transition-all ${dpadUnlocked
+                ? 'text-green-400 font-bold'
+                : vazioTapCount > 0
+                  ? `text-green-${Math.min(vazioTapCount * 100, 600)} font-semibold`
+                  : 'text-gray-500'
+                }`}
+            >
+              vazio
+            </span>{' '}
+            para abrir o estúdio de Pixel Art!
+          </p>
 
-          {/* D-PAD MOBILE */}
-          <div className="md:hidden flex flex-col items-center gap-1 mt-4 opacity-70 select-none">
-            <p className="text-gray-600 text-[9px] mb-1 font-mono">KONAMI CODE</p>
-            <div className="flex justify-center">
-              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowUp', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9650;</button>
+          {/* D-PAD MOBILE - visível apenas após desbloquear tocando em "vazio" */}
+          {dpadUnlocked && (
+            <div className="md:hidden flex flex-col items-center gap-1 mt-4 opacity-80 select-none animate-fade-in">
+              <p className="text-gray-600 text-[9px] mb-1 font-mono">KONAMI CODE</p>
+              <div className="flex justify-center">
+                <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowUp', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9650;</button>
+              </div>
+              <div className="flex gap-1">
+                <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowLeft', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9664;</button>
+                <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowDown', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9660;</button>
+                <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowRight', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9654;</button>
+              </div>
+              <div className="flex gap-2 mt-1">
+                <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyB', bubbles: true }))} className="w-10 h-10 rounded-full bg-gray-800/80 border border-gray-600 text-white text-xs font-bold active:bg-gray-600">B</button>
+                <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA', bubbles: true }))} className="w-10 h-10 rounded-full bg-gray-800/80 border border-gray-600 text-white text-xs font-bold active:bg-gray-600">A</button>
+              </div>
             </div>
-            <div className="flex gap-1">
-              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowLeft', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9664;</button>
-              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowDown', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9660;</button>
-              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowRight', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9654;</button>
-            </div>
-            <div className="flex gap-2 mt-1">
-              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyB', bubbles: true }))} className="w-10 h-10 rounded-full bg-gray-800/80 border border-gray-600 text-white text-xs font-bold active:bg-gray-600">B</button>
-              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA', bubbles: true }))} className="w-10 h-10 rounded-full bg-gray-800/80 border border-gray-600 text-white text-xs font-bold active:bg-gray-600">A</button>
-            </div>
-          </div>
+          )}
         </div>
       )}
-      S
       {neoMode && view === 'canvas' && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-black/90 border border-green-500 text-green-400 font-mono text-xs px-4 py-2 rounded-full shadow-[0_0_20px_rgba(0,255,70,0.5)] animate-pulse pointer-events-none">
           &#9672; MODO MATRIX ATIVADO &#9672; VIDA EXTRA ATIVA
