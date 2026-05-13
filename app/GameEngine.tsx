@@ -262,6 +262,68 @@ const GameEngine = () => {
     setPixelGrid(newGrid);
   };
 
+  // --- NOVO: Upload e Pixelização de Imagem ---
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = adCols;
+        offCanvas.height = adRows;
+        const offCtx = offCanvas.getContext('2d');
+        if (!offCtx) return;
+
+        // Desenha a imagem reduzida para a grade exata (força a pixelização)
+        offCtx.drawImage(img, 0, 0, adCols, adRows);
+        const imgData = offCtx.getImageData(0, 0, adCols, adRows).data;
+
+        if (adType === 'obstacle') {
+          const newGrid = Array(adCols * adRows).fill('');
+          for (let i = 0; i < imgData.length; i += 4) {
+            const r = imgData[i];
+            const g = imgData[i + 1];
+            const b = imgData[i + 2];
+            const a = imgData[i + 3];
+
+            if (a > 128) {
+              newGrid[i / 4] = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+            }
+          }
+          setPixelGrid(newGrid);
+        } else {
+          if (freeDrawCanvasRef.current) {
+            const ctx = freeDrawCanvasRef.current.getContext('2d');
+            if (ctx) {
+              ctx.clearRect(0, 0, adCols * 10, adRows * 10);
+              if (!isTransparentBg) {
+                ctx.fillStyle = baseColor;
+                ctx.fillRect(0, 0, adCols * 10, adRows * 10);
+              }
+
+              for (let r = 0; r < adRows; r++) {
+                for (let c = 0; c < adCols; c++) {
+                  const idx = (r * adCols + c) * 4;
+                  if (imgData[idx + 3] > 128) {
+                    ctx.fillStyle = `rgb(${imgData[idx]},${imgData[idx + 1]},${imgData[idx + 2]})`;
+                    ctx.fillRect(c * 10, r * 10, 10, 10);
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+  // ---------------------------------------------
+
   // --- NOVO: Função para desenhar no Canvas Livre (Parallax) ---
   const drawFreehand = (e: any, isTouch = false) => {
     if (!isFreeDrawingRef.current || !freeDrawCanvasRef.current) return;
@@ -1321,9 +1383,16 @@ const GameEngine = () => {
                 <button onClick={() => setDrawColor('#ef4444')} className="w-6 h-6 rounded-full bg-red-500 border border-gray-500"></button>
                 <button onClick={() => setDrawColor('#f59e0b')} className="w-6 h-6 rounded-full bg-yellow-500 border border-gray-500"></button>
               </div>
-              <button onClick={() => setDrawColor('')} className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-white border border-gray-500">
-                Borracha
-              </button>
+
+              <div className="flex gap-2 items-center">
+                <label className="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-white font-bold cursor-pointer transition-colors shadow-lg shadow-blue-500/30">
+                  📁 Upload Imagem
+                  <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                </label>
+                <button onClick={() => setDrawColor('')} className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-white border border-gray-500">
+                  Borracha
+                </button>
+              </div>
             </div>
 
             {/* --- Controles de Tamanho e Prévia --- */}
