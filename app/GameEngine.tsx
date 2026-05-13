@@ -555,13 +555,15 @@ const GameEngine = () => {
     // ---------------------------------
 
     let obstacles: any[] = [];
-    const particlePool = new ParticlePool(200);
+    const isMobile = canvas.width < 768;
+    const particlePool = new ParticlePool(isMobile ? 80 : 200);
     let activeParallaxAds: any[] = [];
 
-    // Mais estrelas para cobrir monitores grandes
+    // Menos estrelas no mobile para melhor performance
+    const starCount = isMobile ? 20 : 60;
     let parallaxLayers = [
-      { stars: Array.from({ length: 60 }).map(() => ({ x: Math.random() * 2000, y: Math.random() * 1500, size: 1.5 })), speed: 0.2, color: '#4b5563' },
-      { stars: Array.from({ length: 30 }).map(() => ({ x: Math.random() * 2000, y: Math.random() * 1500, size: 2.5 })), speed: 0.5, color: '#9ca3af' }
+      { stars: Array.from({ length: starCount }).map(() => ({ x: Math.random() * 2000, y: Math.random() * 1500, size: 1.5 })), speed: 0.2, color: '#4b5563' },
+      { stars: Array.from({ length: Math.floor(starCount * 0.5) }).map(() => ({ x: Math.random() * 2000, y: Math.random() * 1500, size: 2.5 })), speed: 0.5, color: '#9ca3af' },
     ];
 
     let hasStarted = false;
@@ -578,7 +580,8 @@ const GameEngine = () => {
     const matrixChars = '01ABCDEFNEOMATRIX';
     let matrixDrops: { x: number, y: number, speed: number, char: string, alpha: number }[] = [];
     const initMatrixDrops = (w: number, h: number) => {
-      matrixDrops = Array.from({ length: 60 }, () => ({
+      const dropCount = isMobile ? 20 : 60;
+      matrixDrops = Array.from({ length: dropCount }, () => ({
         x: Math.random() * w, y: Math.random() * h,
         speed: 1 + Math.random() * 3,
         char: matrixChars[Math.floor(Math.random() * matrixChars.length)],
@@ -934,13 +937,15 @@ const GameEngine = () => {
         // Tint verde em modo matrix
         if (neoModeRef.current) {
           ctx.save();
-          ctx.filter = 'hue-rotate(80deg) saturate(3) brightness(1.2)';
+          if (!isMobile) ctx.filter = 'hue-rotate(80deg) saturate(3) brightness(1.2)';
         }
-        // Efeito arco-íris na skin rainbow
+        // Efeito arco-íris na skin rainbow (simplificado no mobile)
         if (!neoModeRef.current && activeSkinRef.current === 'olive_rainbow') {
           ctx.save();
-          const hue = (Date.now() / 10) % 360;
-          ctx.filter = `hue-rotate(${hue}deg) saturate(1.5) brightness(1.1)`;
+          if (!isMobile) {
+            const hue = (Date.now() / 10) % 360;
+            ctx.filter = `hue-rotate(${hue}deg) saturate(1.5) brightness(1.1)`;
+          }
         }
         ctx.drawImage(
           activeOliveImg,
@@ -2082,8 +2087,29 @@ const GameEngine = () => {
           }
         `}</style>
 
+        {/* Injetar estilos CRT - simplificados no mobile */}
+        <style>{`
+          .crt-mobile-simple .crt-scanlines,
+          .crt-mobile-simple .crt-moving-line,
+          .crt-mobile-simple .crt-glitch-layer {
+            animation: none !important;
+          }
+          .crt-mobile-simple .crt-scanlines {
+            background-size: 100% 6px;
+            opacity: 0.3;
+          }
+          .crt-mobile-simple .crt-aberration {
+            filter: none !important;
+          }
+          .crt-mobile-simple.crt-container {
+            animation: none !important;
+            transform: none !important;
+            box-shadow: inset 0 0 30px rgba(0,0,0,0.8);
+          }
+        `}</style>
+
         <div className="flex-1 w-full p-2 md:p-6 flex flex-col relative bg-black items-center justify-center">
-          <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-[#0f172a] crt-container shadow-[0_0_50px_rgba(59,130,246,0.15)] border-2 border-gray-900">
+          <div ref={containerRef} className={`w-full h-full relative overflow-hidden bg-[#0f172a] crt-container shadow-[0_0_50px_rgba(59,130,246,0.15)] border-2 border-gray-900 ${typeof window !== 'undefined' && window.innerWidth < 768 ? 'crt-mobile-simple' : ''}`}>
             <div className="crt-glitch-layer absolute inset-0">
               <canvas
                 ref={canvasRef}
@@ -2096,7 +2122,7 @@ const GameEngine = () => {
             <div className="crt-vignette" />
 
             {!gameState.hasStarted && !gameState.gameOver && (
-              <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none">
+              <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-30 pointer-events-none">
                 <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-2 tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-green-400 text-center">OLIV</h2>
                 <p className="text-gray-300 text-sm md:text-xl mb-8 text-center px-4">Navegue pelo canvas e conquiste território.</p>
                 <p className="text-white bg-blue-600 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
@@ -2106,7 +2132,7 @@ const GameEngine = () => {
             )}
 
             {gameState.isPaused && !gameState.gameOver && (
-              <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-30 backdrop-blur-md pointer-events-none">
+              <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-30 pointer-events-none">
                 <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-4 tracking-widest">PAUSADO</h2>
                 <p className="text-gray-300 md:text-xl">Toque no botão ⏸️ ou pressione <kbd className="font-bold text-yellow-400">P</kbd></p>
               </div>
