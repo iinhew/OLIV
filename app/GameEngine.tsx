@@ -21,9 +21,13 @@ const GameEngine = () => {
   const containerRef = useRef<HTMLDivElement>(null); // Ref para o container pai
   const [view, setView] = useState<'game' | 'canvas'>('game');
 
-  // --- NOVO: Guest Session ---
+  // --- NOVO: Guest & Auth Session ---
   const [showGuestModal, setShowGuestModal] = useState(true);
+  const [authMode, setAuthMode] = useState<'guest' | 'login' | 'signup'>('login');
   const [guestInputName, setGuestInputName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
   const guestUserRef = useRef<{ id: string, username: string } | null>(null);
   const [guestUser, setGuestUser] = useState<{ id: string, username: string } | null>(null);
 
@@ -103,16 +107,33 @@ const GameEngine = () => {
 
   useEffect(() => {
     const initializeSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (session) {
+        const { data: player } = await supabase.from('players').select('*').eq('auth_id', session.user.id).single();
+        if (player) {
+          guestUserRef.current = player;
+          setGuestUser(player);
+          pixelsRef.current = player.pixels;
+          localStorage.setItem('pixelArenaHighScore', player.high_score.toString());
+          localStorage.setItem('pixelArenaPixels', player.pixels.toString());
+          setShowGuestModal(false);
+          setGameState(prev => ({ ...prev, highScore: player.high_score }));
+          return;
+        }
+      }
+
       const savedId = localStorage.getItem('olivGuestId');
       if (savedId) {
         const { data } = await supabase.from('players').select('*').eq('id', savedId).single();
-        if (data) {
+        if (data && !data.auth_id) {
           guestUserRef.current = data;
           setGuestUser(data);
           pixelsRef.current = data.pixels;
           localStorage.setItem('pixelArenaHighScore', data.high_score.toString());
           localStorage.setItem('pixelArenaPixels', data.pixels.toString());
           setShowGuestModal(false);
+          setGameState(prev => ({ ...prev, highScore: data.high_score }));
         } else {
           localStorage.removeItem('olivGuestId');
           setGuestInputName(generateRandomGuestName());
@@ -121,7 +142,6 @@ const GameEngine = () => {
         setGuestInputName(generateRandomGuestName());
       }
 
-      // Sincroniza estado inicial local (fallback)
       pixelsRef.current = pixelsRef.current || parseInt(localStorage.getItem('pixelArenaPixels') || '0');
       setDisplayPixels(pixelsRef.current);
     };
@@ -134,6 +154,19 @@ const GameEngine = () => {
       if (data) {
         purchasedBrandsRef.current = data;
         setBrandsUI(data);
+
+        // --- CARREGA IMAGENS DE PARALLAX PARA A MEMÓRIA ---
+        data.forEach(brand => {
+          const pixels = brand.pixel_data || brand.pixelData;
+          if (pixels && pixels.length > 0) {
+            const firstElement = pixels[0];
+            if (!firstElement.startsWith('META:')) {
+              const img = new Image();
+              img.src = firstElement;
+              parallaxImagesRef.current[brand.id] = img;
+            }
+          }
+        });
       }
     };
     fetchGlobalBrands(); // Chama a função assim que o jogo carrega
@@ -368,6 +401,17 @@ const GameEngine = () => {
 
 
     const triggerGameOver = () => {
+      // --- HACK DE INVENCIBILIDADE (via Console) ---
+      if (typeof window !== 'undefined' && (window as any).isInvincible) {
+        // Se cair no buraco ou bater no teto, volta pro meio da tela
+        if (player.y + player.height >= canvas.height || player.y <= 0) {
+          player.y = canvas.height / 2;
+          player.velocity = 0;
+        }
+        return; // Impede a morte
+      }
+      // ----------------------------------------------
+
       isGameOver = true;
       shakeFrames = 15;
       hasBeatenHighScore = false;
@@ -542,21 +586,36 @@ const GameEngine = () => {
           }
         }
 
-        // --- NOVO: Gerador de Artes Livres no Fundo (1% de chance por frame) ---
-        if (Math.random() < 0.01) {
+        // --- NOVO: Gerador de Artes Livres no Fundo ---
+        // Aumenta a chance se a tela estiver vazia para aparecer rápido ao iniciar
+        let spawnChance = activeParallaxAds.length === 0 ? 0.05 : 0.005; // 0.5% padrão
+        
+        if (Math.random() < spawnChance) {
           const adKeys = Object.keys(parallaxImagesRef.current);
           if (adKeys.length > 0) {
             const randomId = parseInt(adKeys[Math.floor(Math.random() * adKeys.length)]);
             const img = parallaxImagesRef.current[randomId];
-            const sizeMulti = Math.random() * 1.5 + 0.3; // Cria tamanhos variados
+            
+            // Variabilidade de tamanho entre 40% e 80% do tamanho real desenhado
+            const sizeMulti = Math.random() * 0.4 + 0.4; 
+
+            // Respeita a proporção e o tamanho original da imagem (img.width/height)
+            const drawWidth = (img.width || 300) * sizeMulti;
+            const drawHeight = (img.height || 200) * sizeMulti;
+
+            // Se for a primeira arte na tela, nasce colada na borda para não ter delay
+            let startX = canvas.width + 100 + (Math.random() * 400);
+            if (activeParallaxAds.length === 0) {
+               startX = canvas.width;
+            }
 
             activeParallaxAds.push({
-              x: canvas.width + 100,
-              y: Math.random() * (canvas.height - (200 * sizeMulti)),
-              width: 300 * sizeMulti,
-              height: 200 * sizeMulti,
-              speed: gameSpeed * (sizeMulti * 0.4), // Menor = mais lento (profundidade)
-              alpha: 0.3 + (sizeMulti * 0.3),
+              x: startX,
+              y: Math.random() * (canvas.height - drawHeight),
+              width: drawWidth,
+              height: drawHeight,
+              speed: gameSpeed * (sizeMulti * 0.3), // Menor = mais lento (profundidade)
+              alpha: 0.15 + (sizeMulti * 0.4), // Mais suave para não poluir
               img: img
             });
           }
@@ -680,12 +739,12 @@ const GameEngine = () => {
 
           // Usa o sistema de cache de Offscreen Canvas para evitar milhares de fillRect por frame
           const cachedCanvas = RendererUtils.getOrRenderPixelGrid(
-            pixels, 
-            cols, 
-            rows, 
-            obs.color, 
-            obs.color === 'transparent', 
-            obs.width, 
+            pixels,
+            cols,
+            rows,
+            obs.color,
+            obs.color === 'transparent',
+            obs.width,
             obs.height
           );
 
@@ -921,6 +980,64 @@ const GameEngine = () => {
     }
   };
 
+  const handleSignUp = async () => {
+    if (!email || !password) return alert("Preencha email e senha");
+    setAuthLoading(true);
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      alert(error.message);
+      setAuthLoading(false);
+      return;
+    }
+    if (data.user) {
+      const savedId = localStorage.getItem('olivGuestId');
+      if (savedId) {
+        await supabase.from('players').update({ auth_id: data.user.id }).eq('id', savedId);
+        const { data: player } = await supabase.from('players').select('*').eq('id', savedId).single();
+        if (player) {
+          guestUserRef.current = player;
+          setGuestUser(player);
+        }
+      } else {
+        const finalName = email.split('@')[0].substring(0, 15).toUpperCase();
+        const { data: player } = await supabase.from('players').insert([{ username: finalName, pixels: pixelsRef.current, high_score: gameState.highScore, auth_id: data.user.id }]).select('*').single();
+        if (player) {
+          guestUserRef.current = player;
+          setGuestUser(player);
+        }
+      }
+      setShowGuestModal(false);
+    }
+    setAuthLoading(false);
+  };
+
+  const handleSignIn = async () => {
+    if (!email || !password) return alert("Preencha email e senha");
+    setAuthLoading(true);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      alert("Erro ao logar: " + error.message);
+      setAuthLoading(false);
+      return;
+    }
+    if (data.user) {
+      const { data: player } = await supabase.from('players').select('*').eq('auth_id', data.user.id).single();
+      if (player) {
+        guestUserRef.current = player;
+        setGuestUser(player);
+        pixelsRef.current = player.pixels;
+        setDisplayPixels(player.pixels);
+        setGameState(prev => ({ ...prev, highScore: player.high_score }));
+        localStorage.setItem('pixelArenaHighScore', player.high_score.toString());
+        localStorage.setItem('pixelArenaPixels', player.pixels.toString());
+        setShowGuestModal(false);
+      } else {
+        alert("Usuário logado mas sem perfil encontrado. Tente criar conta.");
+      }
+    }
+    setAuthLoading(false);
+  };
+
   return (
     // Transformamos o layout para ser Flex e crescer em toda a tela disponível
     <div className="flex flex-col w-full h-screen bg-black overflow-hidden pt-4 md:pt-6 relative">
@@ -933,33 +1050,50 @@ const GameEngine = () => {
             <h1 className="text-3xl font-black text-white tracking-widest mb-1 uppercase">OLIV</h1>
             <p className="text-gray-400 text-sm text-center mb-6">Entre no mundo invertido</p>
 
-            <div className="w-full flex flex-col gap-2 mb-6">
-              <label className="text-gray-400 text-xs font-bold uppercase">Insira seu nome de convidado</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  maxLength={15}
-                  value={guestInputName}
-                  onChange={(e) => setGuestInputName(e.target.value)}
-                  className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none font-bold tracking-wide"
-                  placeholder="Seu Nome..."
-                />
-                <button
-                  onClick={() => setGuestInputName(generateRandomGuestName())}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xl hover:scale-110 transition-transform"
-                  title="Gerar nome aleatório"
-                >
-                  🎲
-                </button>
-              </div>
+            {/* Abas de Autenticação */}
+            <div className="flex w-full bg-gray-950 p-1 rounded-md border border-gray-700 mb-6">
+              <button onClick={() => setAuthMode('login')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${authMode === 'login' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}>Login</button>
+              <button onClick={() => setAuthMode('signup')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${authMode === 'signup' ? 'bg-purple-600 text-white' : 'text-gray-500 hover:text-white'}`}>Criar Conta</button>
+              <button onClick={() => setAuthMode('guest')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${authMode === 'guest' ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-white'}`}>Convidado</button>
             </div>
 
-            <button
-              onClick={handleCreateGuest}
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-blue-500/30 transition-all active:scale-95"
-            >
-              Jogar Agora
-            </button>
+            {authMode === 'guest' ? (
+              <div className="w-full flex flex-col gap-2 mb-6 animate-fade-in">
+                <label className="text-gray-400 text-xs font-bold uppercase">Nome de convidado</label>
+                <div className="relative">
+                  <input
+                    type="text" maxLength={15} value={guestInputName} onChange={(e) => setGuestInputName(e.target.value)}
+                    className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none font-bold"
+                    placeholder="Seu Nome..."
+                  />
+                  <button onClick={() => setGuestInputName(generateRandomGuestName())} className="absolute right-2 top-1/2 -translate-y-1/2 text-xl hover:scale-110">🎲</button>
+                </div>
+                <button onClick={handleCreateGuest} className="w-full mt-2 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all active:scale-95">
+                  Jogar como Convidado
+                </button>
+              </div>
+            ) : (
+              <div className="w-full flex flex-col gap-3 mb-6 animate-fade-in">
+                <div className="flex flex-col gap-1">
+                  <label className="text-gray-400 text-xs font-bold uppercase">E-mail</label>
+                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none" placeholder="seu@email.com" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-gray-400 text-xs font-bold uppercase">Senha</label>
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none" placeholder="••••••••" />
+                </div>
+
+                {authMode === 'login' ? (
+                  <button onClick={handleSignIn} disabled={authLoading} className="w-full mt-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all active:scale-95">
+                    {authLoading ? 'Carregando...' : 'Entrar'}
+                  </button>
+                ) : (
+                  <button onClick={handleSignUp} disabled={authLoading} className="w-full mt-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all active:scale-95">
+                    {authLoading ? 'Carregando...' : 'Criar Conta e Salvar'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
