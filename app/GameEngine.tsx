@@ -27,7 +27,13 @@ const GameEngine = () => {
   const [guestInputName, setGuestInputName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [signUpUsername, setSignUpUsername] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [linkMode, setLinkMode] = useState<'login' | 'signup'>('signup');
+  const [linkEmail, setLinkEmail] = useState('');
+  const [linkPassword, setLinkPassword] = useState('');
+  const [linkUsername, setLinkUsername] = useState('');
   const guestUserRef = useRef<{ id: string, username: string } | null>(null);
   const [guestUser, setGuestUser] = useState<{ id: string, username: string } | null>(null);
 
@@ -1092,14 +1098,16 @@ const GameEngine = () => {
     if (data.user) {
       const savedId = localStorage.getItem('olivGuestId');
       if (savedId) {
-        await supabase.from('players').update({ auth_id: data.user.id }).eq('id', savedId);
+        // Vincula a conta existente ao auth
+        const usernameToUse = signUpUsername.trim() || email.split('@')[0].substring(0, 15).toUpperCase();
+        await supabase.from('players').update({ auth_id: data.user.id, username: usernameToUse }).eq('id', savedId);
         const { data: player } = await supabase.from('players').select('*').eq('id', savedId).single();
         if (player) {
           guestUserRef.current = player;
           setGuestUser(player);
         }
       } else {
-        const finalName = email.split('@')[0].substring(0, 15).toUpperCase();
+        const finalName = signUpUsername.trim() || email.split('@')[0].substring(0, 15).toUpperCase();
         const { data: player } = await supabase.from('players').insert([{ username: finalName, pixels: pixelsRef.current, high_score: gameState.highScore, auth_id: data.user.id }]).select('*').single();
         if (player) {
           guestUserRef.current = player;
@@ -1109,6 +1117,50 @@ const GameEngine = () => {
       setShowGuestModal(false);
     }
     setAuthLoading(false);
+  };
+
+  const handleLinkAccount = async () => {
+    if (!linkEmail || !linkPassword) return alert('Preencha email e senha');
+    setAuthLoading(true);
+    const savedId = guestUserRef.current?.id;
+
+    if (linkMode === 'signup') {
+      const { data, error } = await supabase.auth.signUp({ email: linkEmail, password: linkPassword });
+      if (error) { alert(error.message); setAuthLoading(false); return; }
+      if (data.user && savedId) {
+        const usernameToUse = linkUsername.trim() || linkEmail.split('@')[0].substring(0, 15).toUpperCase();
+        await supabase.from('players').update({ auth_id: data.user.id, username: usernameToUse }).eq('id', savedId);
+        const { data: player } = await supabase.from('players').select('*').eq('id', savedId).single();
+        if (player) { guestUserRef.current = player; setGuestUser(player); }
+      }
+    } else {
+      const { data, error } = await supabase.auth.signInWithPassword({ email: linkEmail, password: linkPassword });
+      if (error) { alert(error.message); setAuthLoading(false); return; }
+      if (data.user) {
+        const { data: existingPlayer } = await supabase.from('players').select('*').eq('auth_id', data.user.id).single();
+        if (existingPlayer) {
+          // Já tem uma conta, merge: mantém o maior highscore e soma pixels
+          const mergedHighScore = Math.max(existingPlayer.high_score, gameState.highScore);
+          const mergedPixels = existingPlayer.pixels + (pixelsRef.current || 0);
+          await supabase.from('players').update({ high_score: mergedHighScore, pixels: mergedPixels }).eq('id', existingPlayer.id);
+          // Deleta o perfil de convidado se existir
+          if (savedId) await supabase.from('players').delete().eq('id', savedId);
+          localStorage.removeItem('olivGuestId');
+          guestUserRef.current = { ...existingPlayer, high_score: mergedHighScore, pixels: mergedPixels };
+          setGuestUser(guestUserRef.current as any);
+          pixelsRef.current = mergedPixels;
+          setDisplayPixels(mergedPixels);
+          setGameState(prev => ({ ...prev, highScore: mergedHighScore }));
+        } else if (savedId) {
+          await supabase.from('players').update({ auth_id: data.user.id }).eq('id', savedId);
+          const { data: player } = await supabase.from('players').select('*').eq('id', savedId).single();
+          if (player) { guestUserRef.current = player; setGuestUser(player); }
+        }
+      }
+    }
+
+    setAuthLoading(false);
+    setShowLinkModal(false);
   };
 
   const handleSignIn = async () => {
@@ -1174,6 +1226,12 @@ const GameEngine = () => {
               </div>
             ) : (
               <div className="w-full flex flex-col gap-3 mb-6 animate-fade-in">
+                {authMode === 'signup' && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-gray-400 text-xs font-bold uppercase">Nome de Usuário</label>
+                    <input type="text" maxLength={15} value={signUpUsername} onChange={(e) => setSignUpUsername(e.target.value.toUpperCase())} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-purple-500 outline-none font-bold" placeholder="SEU_NICK" />
+                  </div>
+                )}
                 <div className="flex flex-col gap-1">
                   <label className="text-gray-400 text-xs font-bold uppercase">E-mail</label>
                   <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none" placeholder="seu@email.com" />
@@ -1198,14 +1256,25 @@ const GameEngine = () => {
         </div>
       )}
 
-      <div className="flex gap-2 md:gap-4 mb-2 md:mb-4 border-b border-gray-800 w-full px-2 md:px-4 pb-2 justify-center shrink-0 relative">
-        {/* Nome do Jogador Logado */}
-        {guestUser && (
-          <div className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 flex items-center gap-1 md:gap-2 bg-gray-900/80 px-2 md:px-3 py-1 rounded-full border border-gray-700 shadow-sm z-10 pointer-events-none">
-            <span className="hidden sm:inline text-[10px] md:text-xs text-gray-400">Convidado:</span>
-            <span className="text-[10px] md:text-sm text-blue-400 font-bold truncate max-w-[100px] md:max-w-[150px]">{guestUser.username}</span>
-          </div>
-        )}
+      {/* Nome do Jogador + Botão de Vinculação (fora da barra de abas) */}
+      {guestUser && (
+        <div className="flex justify-end items-center w-full px-3 pb-1 shrink-0 gap-2">
+          <span className="text-[10px] md:text-xs text-gray-400 hidden sm:inline">
+            {(guestUser as any).auth_id ? 'Conta:' : 'Convidado:'}
+          </span>
+          <span className="text-[10px] md:text-sm text-blue-400 font-bold truncate max-w-[120px]">{guestUser.username}</span>
+          {!(guestUser as any).auth_id && (
+            <button
+              onClick={() => { setLinkEmail(''); setLinkPassword(''); setLinkUsername(''); setShowLinkModal(true); }}
+              className="text-[9px] md:text-xs bg-purple-700 hover:bg-purple-600 text-white px-2 py-0.5 rounded-full font-bold transition-colors shrink-0"
+            >
+              Vincular Conta
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-2 md:gap-4 mb-2 md:mb-4 border-b border-gray-800 w-full px-2 md:px-4 pb-2 justify-center shrink-0">
         <button
           onClick={() => { setView('canvas'); setDisplayPixels(pixelsRef.current); }}
           className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'canvas' ? 'bg-gray-800 text-white border-b-2 border-blue-500' : 'text-gray-500 hover:text-white'}`}
@@ -1219,6 +1288,43 @@ const GameEngine = () => {
           Vista do Jogo
         </button>
       </div>
+
+      {/* Modal de Vinculação de Conta */}
+      {showLinkModal && (
+        <div className="absolute inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl shadow-2xl w-full max-w-sm flex flex-col gap-4">
+            <h2 className="text-white font-bold text-xl text-center">🔗 Vincular Conta</h2>
+            <p className="text-gray-400 text-xs text-center">Seus pontos e High Score serão salvos permanentemente!</p>
+
+            <div className="flex bg-gray-950 p-1 rounded-md border border-gray-700">
+              <button onClick={() => setLinkMode('signup')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${linkMode === 'signup' ? 'bg-purple-600 text-white' : 'text-gray-500 hover:text-white'}`}>Criar Conta</button>
+              <button onClick={() => setLinkMode('login')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${linkMode === 'login' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}>Já tenho conta</button>
+            </div>
+
+            {linkMode === 'signup' && (
+              <div className="flex flex-col gap-1">
+                <label className="text-gray-400 text-xs font-bold uppercase">Nome de Usuário</label>
+                <input type="text" maxLength={15} value={linkUsername} onChange={(e) => setLinkUsername(e.target.value.toUpperCase())} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-purple-500 outline-none font-bold" placeholder="SEU_NICK" />
+              </div>
+            )}
+            <div className="flex flex-col gap-1">
+              <label className="text-gray-400 text-xs font-bold uppercase">E-mail</label>
+              <input type="email" value={linkEmail} onChange={(e) => setLinkEmail(e.target.value)} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none" placeholder="seu@email.com" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-gray-400 text-xs font-bold uppercase">Senha</label>
+              <input type="password" value={linkPassword} onChange={(e) => setLinkPassword(e.target.value)} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none" placeholder="••••••••" />
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setShowLinkModal(false)} className="flex-1 py-2.5 text-gray-300 hover:text-white border border-gray-600 rounded-lg font-bold transition-colors">Cancelar</button>
+              <button onClick={handleLinkAccount} disabled={authLoading} className={`flex-1 py-2.5 text-white font-bold rounded-lg transition-all active:scale-95 ${linkMode === 'signup' ? 'bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800' : 'bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800'}`}>
+                {authLoading ? 'Salvando...' : linkMode === 'signup' ? 'Criar e Vincular' : 'Entrar e Vincular'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {view === 'canvas' && (
         <div className="w-full flex-1 flex flex-col items-center animate-fade-in px-4 pb-10 overflow-y-auto">
@@ -1289,7 +1395,7 @@ const GameEngine = () => {
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-6 w-full max-w-md max-h-[80vh] flex flex-col">
             <h2 className="text-2xl font-bold text-center text-white mb-4 flex items-center justify-center gap-2">
-              🏆 Ranking Global (Top 50)
+              <img src="/images/icon_trophy.png" alt="Trophy" className="w-8 h-8" /> Ranking Global (Top 50)
             </h2>
 
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar" style={{ minHeight: '300px' }}>
@@ -1515,14 +1621,14 @@ const GameEngine = () => {
             High Score: {gameState.highScore}
           </span>
           <div className="flex gap-3 md:gap-6 items-center">
-            <button onClick={handleOpenRanking} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Ranking Global">
-              🏆
+            <button onClick={handleOpenRanking} className="hover:scale-110 transition-transform" title="Ranking Global">
+              <img src="/images/icon_trophy.png" alt="Ranking" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
-            <button onClick={handleToggleMusic} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Música de Fundo">
-              {isMutedMusic ? '🔇' : '🎵'}
+            <button onClick={handleToggleMusic} className="hover:scale-110 transition-transform" title="Música de Fundo">
+              <img src={isMutedMusic ? "/images/icon_music_muted.png" : "/images/icon_music.png"} alt="Music" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
-            <button onClick={handleToggleSFX} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Efeitos Sonoros">
-              {isMutedSFX ? '🔕' : '🔔'}
+            <button onClick={handleToggleSFX} className="hover:scale-110 transition-transform" title="Efeitos Sonoros">
+              <img src={isMutedSFX ? "/images/icon_sound_muted.png" : "/images/icon_sound.png"} alt="SFX" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
             <span className="text-yellow-400">Px: {displayPixels}</span>
             <span className="text-green-400">Score: {Math.floor(gameState.score)}</span>
@@ -1530,7 +1636,7 @@ const GameEngine = () => {
               onClick={() => window.dispatchEvent(new Event('toggleExternalPause'))}
               className="bg-gray-800 hover:bg-gray-700 p-2 rounded-md text-white md:hidden shadow-lg border border-gray-600"
             >
-              {gameState.isPaused ? '▶️' : '⏸️'}
+              <img src={gameState.isPaused ? '/images/icon_play.png' : '/images/icon_pause.png'} alt="Pause/Play" className="w-5 h-5" />
             </button>
           </div>
         </div>
