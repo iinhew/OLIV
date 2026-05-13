@@ -36,13 +36,13 @@ export class ParticlePool {
     // Se o pool estiver cheio, ignoramos novas partículas (graceful degradation)
   }
 
-  public updateAndDraw(ctx: CanvasRenderingContext2D) {
+  public updateAndDraw(ctx: CanvasRenderingContext2D, dt: number = 1) {
     for (let i = 0; i < this.pool.length; i++) {
       const p = this.pool[i];
       if (p.active) {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.life -= 0.05; // Baseado no PARTICLE_LIFETIME_DECREMENT
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.life -= 0.05 * dt; // Baseado no PARTICLE_LIFETIME_DECREMENT
         if (p.life <= 0) {
           p.active = false; // "Destrói" a partícula apenas inativando-a
         } else {
