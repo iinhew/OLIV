@@ -31,6 +31,19 @@ const GameEngine = () => {
   const guestUserRef = useRef<{ id: string, username: string } | null>(null);
   const [guestUser, setGuestUser] = useState<{ id: string, username: string } | null>(null);
 
+  // --- NOVO: Ranking Global ---
+  const [showRankingModal, setShowRankingModal] = useState(false);
+  const [rankingData, setRankingData] = useState<{ username: string, high_score: number }[]>([]);
+  const [loadingRanking, setLoadingRanking] = useState(false);
+
+  const handleOpenRanking = async () => {
+    setShowRankingModal(true);
+    setLoadingRanking(true);
+    const { data, error } = await supabase.from('players').select('username, high_score').order('high_score', { ascending: false }).limit(50);
+    if (data) setRankingData(data);
+    setLoadingRanking(false);
+  };
+  // -----------------------------
 
   const [gameState, setGameState] = useState({
     hasStarted: false,
@@ -248,6 +261,68 @@ const GameEngine = () => {
     newGrid[index] = drawColor;
     setPixelGrid(newGrid);
   };
+
+  // --- NOVO: Upload e Pixelização de Imagem ---
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = adCols;
+        offCanvas.height = adRows;
+        const offCtx = offCanvas.getContext('2d');
+        if (!offCtx) return;
+
+        // Desenha a imagem reduzida para a grade exata (força a pixelização)
+        offCtx.drawImage(img, 0, 0, adCols, adRows);
+        const imgData = offCtx.getImageData(0, 0, adCols, adRows).data;
+
+        if (adType === 'obstacle') {
+          const newGrid = Array(adCols * adRows).fill('');
+          for (let i = 0; i < imgData.length; i += 4) {
+            const r = imgData[i];
+            const g = imgData[i + 1];
+            const b = imgData[i + 2];
+            const a = imgData[i + 3];
+
+            if (a > 128) {
+              newGrid[i / 4] = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+            }
+          }
+          setPixelGrid(newGrid);
+        } else {
+          if (freeDrawCanvasRef.current) {
+            const ctx = freeDrawCanvasRef.current.getContext('2d');
+            if (ctx) {
+              ctx.clearRect(0, 0, adCols * 10, adRows * 10);
+              if (!isTransparentBg) {
+                ctx.fillStyle = baseColor;
+                ctx.fillRect(0, 0, adCols * 10, adRows * 10);
+              }
+
+              for (let r = 0; r < adRows; r++) {
+                for (let c = 0; c < adCols; c++) {
+                  const idx = (r * adCols + c) * 4;
+                  if (imgData[idx + 3] > 128) {
+                    ctx.fillStyle = `rgb(${imgData[idx]},${imgData[idx + 1]},${imgData[idx + 2]})`;
+                    ctx.fillRect(c * 10, r * 10, 10, 10);
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+  // ---------------------------------------------
 
   // --- NOVO: Função para desenhar no Canvas Livre (Parallax) ---
   const drawFreehand = (e: any, isTouch = false) => {
@@ -1209,6 +1284,41 @@ const GameEngine = () => {
         </div>
       )}
 
+      {/* --- NOVO: Modal de Ranking Global --- */}
+      {showRankingModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-6 w-full max-w-md max-h-[80vh] flex flex-col">
+            <h2 className="text-2xl font-bold text-center text-white mb-4 flex items-center justify-center gap-2">
+              🏆 Ranking Global (Top 50)
+            </h2>
+
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar" style={{ minHeight: '300px' }}>
+              {loadingRanking ? (
+                <div className="text-center text-gray-400 py-10">Carregando Ranking...</div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {rankingData.map((player, index) => (
+                    <div key={index} className={`flex justify-between items-center p-3 rounded-lg ${index === 0 ? 'bg-yellow-600/20 border border-yellow-500/50' : index === 1 ? 'bg-gray-400/20 border border-gray-400/50' : index === 2 ? 'bg-amber-700/20 border border-amber-700/50' : 'bg-gray-800'}`}>
+                      <div className="flex items-center gap-3">
+                        <span className={`font-bold ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-gray-300' : index === 2 ? 'text-amber-500' : 'text-gray-500'}`}>#{index + 1}</span>
+                        <span className="text-white font-medium">{player.username || 'Anônimo'}</span>
+                      </div>
+                      <span className="text-blue-400 font-bold">{player.high_score} pts</span>
+                    </div>
+                  ))}
+                  {rankingData.length === 0 && <div className="text-center text-gray-500">Nenhum jogador encontrado.</div>}
+                </div>
+              )}
+            </div>
+
+            <button onClick={() => setShowRankingModal(false)} className="mt-6 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all active:scale-95">
+              Fechar Ranking
+            </button>
+          </div>
+        </div>
+      )}
+      {/* ------------------------------------- */}
+
       {buyModalOpen && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl shadow-2xl w-full max-w-xl flex flex-col gap-4">
@@ -1273,9 +1383,16 @@ const GameEngine = () => {
                 <button onClick={() => setDrawColor('#ef4444')} className="w-6 h-6 rounded-full bg-red-500 border border-gray-500"></button>
                 <button onClick={() => setDrawColor('#f59e0b')} className="w-6 h-6 rounded-full bg-yellow-500 border border-gray-500"></button>
               </div>
-              <button onClick={() => setDrawColor('')} className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-white border border-gray-500">
-                Borracha
-              </button>
+
+              <div className="flex gap-2 items-center">
+                <label className="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-white font-bold cursor-pointer transition-colors shadow-lg shadow-blue-500/30">
+                  📁 Upload Imagem
+                  <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                </label>
+                <button onClick={() => setDrawColor('')} className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-white border border-gray-500">
+                  Borracha
+                </button>
+              </div>
             </div>
 
             {/* --- Controles de Tamanho e Prévia --- */}
@@ -1398,6 +1515,9 @@ const GameEngine = () => {
             High Score: {gameState.highScore}
           </span>
           <div className="flex gap-3 md:gap-6 items-center">
+            <button onClick={handleOpenRanking} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Ranking Global">
+              🏆
+            </button>
             <button onClick={handleToggleMusic} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Música de Fundo">
               {isMutedMusic ? '🔇' : '🎵'}
             </button>
