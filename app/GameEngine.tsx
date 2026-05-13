@@ -747,6 +747,14 @@ const GameEngine = () => {
       lastFrameTime = now;
       // ------------------
 
+      // --- BULLET TIME (Neo extra-life) ---
+      if (bulletTimeRef.current > 0) {
+        bulletTimeRef.current -= dt;
+        animationFrameId = window.requestAnimationFrame(render);
+        if (bulletTimeRef.current > 0 && Math.floor(bulletTimeRef.current) % 3 !== 0) return;
+      }
+      // ------------------------------------
+
       let isCountingDown = false;
       let countdownSecs = 0;
       if (countdownUntil > Date.now()) {
@@ -813,7 +821,7 @@ const GameEngine = () => {
       // 2. Lógica de Física e Geração de Artes de Fundo (Parallax Ads)
       if (isPhysicsActive) {
         player.velocity += player.gravity * dt;
-        player.y += player.velocity;
+        player.y += player.velocity * dt;
         score += 0.05 * dt;
         gameSpeed = 3 + (score / 150);
 
