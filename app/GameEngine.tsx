@@ -27,7 +27,13 @@ const GameEngine = () => {
   const [guestInputName, setGuestInputName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [signUpUsername, setSignUpUsername] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [linkMode, setLinkMode] = useState<'login' | 'signup'>('signup');
+  const [linkEmail, setLinkEmail] = useState('');
+  const [linkPassword, setLinkPassword] = useState('');
+  const [linkUsername, setLinkUsername] = useState('');
   const guestUserRef = useRef<{ id: string, username: string } | null>(null);
   const [guestUser, setGuestUser] = useState<{ id: string, username: string } | null>(null);
 
@@ -35,6 +41,16 @@ const GameEngine = () => {
   const [showRankingModal, setShowRankingModal] = useState(false);
   const [rankingData, setRankingData] = useState<{ username: string, high_score: number }[]>([]);
   const [loadingRanking, setLoadingRanking] = useState(false);
+
+  // --- NOVO: Easter Egg Konami / Modo Neo ---
+  const [neoMode, setNeoMode] = useState(false);
+  const neoModeRef = useRef(false);
+  const neoExtraLifeRef = useRef(0); // 0 = sem extra life, 1 = tem vida extra
+  const bulletTimeRef = useRef(0);   // frames de bullet time restantes
+  const konamiSequenceRef = useRef<string[]>([]);
+  const KONAMI_CODE = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
+  const oliveNeoImageRef = useRef<HTMLImageElement | null>(null);
+  // ----------------------------------------
 
   const handleOpenRanking = async () => {
     setShowRankingModal(true);
@@ -117,6 +133,26 @@ const GameEngine = () => {
   const crownImageRef = useRef<HTMLImageElement | null>(null);
   const coinImageRef = useRef<HTMLImageElement | null>(null);
   const magnetImageRef = useRef<HTMLImageElement | null>(null);
+
+  // --- Konami Code listener (ativo na vista do canvas) ---
+  useEffect(() => {
+    const handleKonami = (e: KeyboardEvent) => {
+      if (view !== 'canvas') return;
+      const seq = konamiSequenceRef.current;
+      seq.push(e.code);
+      if (seq.length > KONAMI_CODE.length) seq.shift();
+      if (seq.length === KONAMI_CODE.length && seq.every((k, i) => k === KONAMI_CODE[i])) {
+        konamiSequenceRef.current = [];
+        const next = !neoModeRef.current;
+        neoModeRef.current = next;
+        setNeoMode(next);
+        if (next) neoExtraLifeRef.current = 1;
+      }
+    };
+    window.addEventListener('keydown', handleKonami);
+    return () => window.removeEventListener('keydown', handleKonami);
+  }, [view]);
+  // -------------------------------------------------------
 
   useEffect(() => {
     const initializeSession = async () => {
@@ -423,6 +459,10 @@ const GameEngine = () => {
     oliveImg.src = '/images/olive.png';
     oliveImageRef.current = oliveImg;
 
+    const oliveNeoImg = new Image();
+    oliveNeoImg.src = '/images/olive_neo.png';
+    oliveNeoImageRef.current = oliveNeoImg;
+
     const crownImg = new Image();
     crownImg.src = '/images/crown.png';
     crownImageRef.current = crownImg;
@@ -495,6 +535,20 @@ const GameEngine = () => {
     let magnetActiveUntil = 0;
     let countdownUntil = 0;
 
+    // --- NEO MODE: Matrix rain drops ---
+    const matrixChars = '01ABCDEFNEOMATRIX';
+    let matrixDrops: { x: number, y: number, speed: number, char: string, alpha: number }[] = [];
+    const initMatrixDrops = (w: number, h: number) => {
+      matrixDrops = Array.from({ length: 60 }, () => ({
+        x: Math.random() * w, y: Math.random() * h,
+        speed: 1 + Math.random() * 3,
+        char: matrixChars[Math.floor(Math.random() * matrixChars.length)],
+        alpha: 0.2 + Math.random() * 0.6
+      }));
+    };
+    initMatrixDrops(canvas.width, canvas.height);
+    // ------------------------------------
+
     let currentHighScore = parseInt(localStorage.getItem('pixelArenaHighScore') || '0');
     setGameState(prev => ({ ...prev, highScore: currentHighScore }));
 
@@ -503,14 +557,32 @@ const GameEngine = () => {
     const triggerGameOver = () => {
       // --- HACK DE INVENCIBILIDADE (via Console) ---
       if (typeof window !== 'undefined' && (window as any).isInvincible) {
-        // Se cair no buraco ou bater no teto, volta pro meio da tela
         if (player.y + player.height >= canvas.height || player.y <= 0) {
           player.y = canvas.height / 2;
           player.velocity = 0;
         }
-        return; // Impede a morte
+        return;
       }
       // ----------------------------------------------
+
+      // --- NEO EXTRA LIFE (protege de QUALQUER morte) ---
+      if (neoModeRef.current && neoExtraLifeRef.current > 0) {
+        neoExtraLifeRef.current = 0;
+        bulletTimeRef.current = 50;
+        // Reposiciona no centro da tela
+        player.y = canvas.height / 2 - player.height;
+        player.velocity = player.jumpStrength * 0.8;
+        // Partículas verdes
+        for (let j = 0; j < 20; j++) {
+          particlePool.spawn(
+            player.x + player.width / 2, player.y + player.height / 2,
+            (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10,
+            1.5, false, 'rgba(0, 255, 70, ALPHA)'
+          );
+        }
+        return; // Não morre!
+      }
+      // --------------------------------------------------
 
       isGameOver = true;
       shakeFrames = 15;
@@ -606,6 +678,15 @@ const GameEngine = () => {
         return;
       }
 
+      // --- BULLET TIME (Neo extra-life) ---
+      if (bulletTimeRef.current > 0) {
+        bulletTimeRef.current--;
+        animationFrameId = window.requestAnimationFrame(render);
+        // Slow motion: renderiza apenas 1 em cada 3 frames
+        if (bulletTimeRef.current % 3 !== 0) return;
+      }
+      // ------------------------------------
+
       let isCountingDown = false;
       let countdownSecs = 0;
       if (countdownUntil > Date.now()) {
@@ -631,15 +712,43 @@ const GameEngine = () => {
         shakeFrames--;
       }
 
-      // 1. Renderiza o fundo de estrelas (Parallax Base)
-      parallaxLayers.forEach(layer => {
-        layer.stars.forEach(star => {
-          if (isPhysicsActive) star.x -= gameSpeed * layer.speed;
-          if (star.x < 0) { star.x = canvas.width; star.y = Math.random() * canvas.height; }
-          ctx.fillStyle = layer.color;
-          ctx.fillRect(star.x, star.y, star.size, star.size);
+      // 1. Fundo: modo Matrix (Neo) ou estrelas normais
+      if (neoModeRef.current) {
+        // Fundo verde escuro sólido
+        ctx.fillStyle = '#020d02';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Camada de brilho sutil
+        ctx.fillStyle = 'rgba(0, 40, 10, 0.6)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.font = 'bold 14px monospace';
+        matrixDrops.forEach(drop => {
+          if (isPhysicsActive || isGameOver) {
+            drop.y += drop.speed * 0.5;
+            drop.x -= (isPhysicsActive ? gameSpeed : 3) * 0.4;
+            if (drop.y > canvas.height) {
+              drop.y = -14;
+              drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+            }
+            if (drop.x < -14) {
+              drop.x = canvas.width + Math.random() * 100;
+              drop.y = Math.random() * canvas.height;
+              drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+            }
+          }
+          ctx.fillStyle = `rgba(0, 255, 70, ${drop.alpha})`;
+          ctx.fillText(drop.char, drop.x, drop.y);
         });
-      });
+      } else {
+        parallaxLayers.forEach(layer => {
+          layer.stars.forEach(star => {
+            if (isPhysicsActive) star.x -= gameSpeed * layer.speed;
+            if (star.x < 0) { star.x = canvas.width; star.y = Math.random() * canvas.height; }
+            ctx.fillStyle = layer.color;
+            ctx.fillRect(star.x, star.y, star.size, star.size);
+          });
+        });
+      }
 
       // 2. Lógica de Física e Geração de Artes de Fundo (Parallax Ads)
       if (isPhysicsActive) {
@@ -736,7 +845,7 @@ const GameEngine = () => {
         if (ad.x + ad.width < -100) activeParallaxAds.splice(i, 1);
       }
 
-      // 4. Verificação de Morte por queda
+      // 4. Verificação de Morte por queda/teto
       if ((player.y + player.height >= canvas.height || player.y <= 0) && hasStarted) {
         if (!isGameOver) triggerGameOver();
       }
@@ -754,15 +863,30 @@ const GameEngine = () => {
         renderY += Math.sin(Date.now() / 200) * 5;
       }
 
-      if (oliveImageRef.current && oliveImageRef.current.complete) {
+      // Escolhe imagem: neo mode = olive_neo, caso contrário = olive normal
+      const activeOliveImg = neoModeRef.current ? oliveNeoImageRef.current : oliveImageRef.current;
+      if (activeOliveImg && activeOliveImg.complete) {
+        // Tint verde em modo matrix
+        if (neoModeRef.current) {
+          ctx.save();
+          ctx.filter = 'hue-rotate(80deg) saturate(3) brightness(1.2)';
+        }
         ctx.drawImage(
-          oliveImageRef.current,
+          activeOliveImg,
           player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight),
           drawWidth, drawHeight
         );
+        if (neoModeRef.current) ctx.restore();
       } else {
-        ctx.fillStyle = 'white';
+        ctx.fillStyle = neoModeRef.current ? '#00ff46' : 'white';
         ctx.fillRect(player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight), drawWidth, drawHeight);
+      }
+
+      // Indicador de vida extra Neo
+      if (neoModeRef.current && neoExtraLifeRef.current > 0) {
+        ctx.fillStyle = 'rgba(0,255,70,0.9)';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText('[NEO SHIELD]', player.x - 8, renderY - 8);
       }
 
       if (hasBeatenHighScore && crownImageRef.current && crownImageRef.current.complete) {
@@ -954,7 +1078,36 @@ const GameEngine = () => {
               }
             } else {
               if (!obs.isBouncy) {
-                triggerGameOver();
+                // --- NEO EXTRA LIFE: desvia em vez de morrer ---
+                if (neoModeRef.current && neoExtraLifeRef.current > 0) {
+                  neoExtraLifeRef.current = 0;
+                  bulletTimeRef.current = 40;
+
+                  if (player.velocity < 0) {
+                    // Batida de BAIXO (subindo): empurra para BAIXO, fora da plataforma
+                    player.y = obs.y + obs.height + 2;
+                    player.velocity = Math.abs(player.jumpStrength) * 0.6;
+                  } else {
+                    // Batida LATERAL (descendo de lado): empurra para CIMA
+                    player.velocity = player.jumpStrength * 1.2;
+                    player.y -= 10;
+                  }
+
+                  // Efeito de partículas verdes
+                  for (let j = 0; j < 15; j++) {
+                    particlePool.spawn(
+                      player.x + player.width / 2, player.y + player.height / 2,
+                      (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8,
+                      1.2, false, 'rgba(0, 255, 70, ALPHA)'
+                    );
+                  }
+                  // Flash verde na tela
+                  ctx.fillStyle = 'rgba(0, 255, 70, 0.25)';
+                  ctx.fillRect(0, 0, canvas.width, canvas.height);
+                } else {
+                  triggerGameOver();
+                }
+                // -----------------------------------------------
               }
             }
           } else {
@@ -1092,14 +1245,16 @@ const GameEngine = () => {
     if (data.user) {
       const savedId = localStorage.getItem('olivGuestId');
       if (savedId) {
-        await supabase.from('players').update({ auth_id: data.user.id }).eq('id', savedId);
+        // Vincula a conta existente ao auth
+        const usernameToUse = signUpUsername.trim() || email.split('@')[0].substring(0, 15).toUpperCase();
+        await supabase.from('players').update({ auth_id: data.user.id, username: usernameToUse }).eq('id', savedId);
         const { data: player } = await supabase.from('players').select('*').eq('id', savedId).single();
         if (player) {
           guestUserRef.current = player;
           setGuestUser(player);
         }
       } else {
-        const finalName = email.split('@')[0].substring(0, 15).toUpperCase();
+        const finalName = signUpUsername.trim() || email.split('@')[0].substring(0, 15).toUpperCase();
         const { data: player } = await supabase.from('players').insert([{ username: finalName, pixels: pixelsRef.current, high_score: gameState.highScore, auth_id: data.user.id }]).select('*').single();
         if (player) {
           guestUserRef.current = player;
@@ -1109,6 +1264,50 @@ const GameEngine = () => {
       setShowGuestModal(false);
     }
     setAuthLoading(false);
+  };
+
+  const handleLinkAccount = async () => {
+    if (!linkEmail || !linkPassword) return alert('Preencha email e senha');
+    setAuthLoading(true);
+    const savedId = guestUserRef.current?.id;
+
+    if (linkMode === 'signup') {
+      const { data, error } = await supabase.auth.signUp({ email: linkEmail, password: linkPassword });
+      if (error) { alert(error.message); setAuthLoading(false); return; }
+      if (data.user && savedId) {
+        const usernameToUse = linkUsername.trim() || linkEmail.split('@')[0].substring(0, 15).toUpperCase();
+        await supabase.from('players').update({ auth_id: data.user.id, username: usernameToUse }).eq('id', savedId);
+        const { data: player } = await supabase.from('players').select('*').eq('id', savedId).single();
+        if (player) { guestUserRef.current = player; setGuestUser(player); }
+      }
+    } else {
+      const { data, error } = await supabase.auth.signInWithPassword({ email: linkEmail, password: linkPassword });
+      if (error) { alert(error.message); setAuthLoading(false); return; }
+      if (data.user) {
+        const { data: existingPlayer } = await supabase.from('players').select('*').eq('auth_id', data.user.id).single();
+        if (existingPlayer) {
+          // Já tem uma conta, merge: mantém o maior highscore e soma pixels
+          const mergedHighScore = Math.max(existingPlayer.high_score, gameState.highScore);
+          const mergedPixels = existingPlayer.pixels + (pixelsRef.current || 0);
+          await supabase.from('players').update({ high_score: mergedHighScore, pixels: mergedPixels }).eq('id', existingPlayer.id);
+          // Deleta o perfil de convidado se existir
+          if (savedId) await supabase.from('players').delete().eq('id', savedId);
+          localStorage.removeItem('olivGuestId');
+          guestUserRef.current = { ...existingPlayer, high_score: mergedHighScore, pixels: mergedPixels };
+          setGuestUser(guestUserRef.current as any);
+          pixelsRef.current = mergedPixels;
+          setDisplayPixels(mergedPixels);
+          setGameState(prev => ({ ...prev, highScore: mergedHighScore }));
+        } else if (savedId) {
+          await supabase.from('players').update({ auth_id: data.user.id }).eq('id', savedId);
+          const { data: player } = await supabase.from('players').select('*').eq('id', savedId).single();
+          if (player) { guestUserRef.current = player; setGuestUser(player); }
+        }
+      }
+    }
+
+    setAuthLoading(false);
+    setShowLinkModal(false);
   };
 
   const handleSignIn = async () => {
@@ -1174,6 +1373,12 @@ const GameEngine = () => {
               </div>
             ) : (
               <div className="w-full flex flex-col gap-3 mb-6 animate-fade-in">
+                {authMode === 'signup' && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-gray-400 text-xs font-bold uppercase">Nome de Usuário</label>
+                    <input type="text" maxLength={15} value={signUpUsername} onChange={(e) => setSignUpUsername(e.target.value.toUpperCase())} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-purple-500 outline-none font-bold" placeholder="SEU_NICK" />
+                  </div>
+                )}
                 <div className="flex flex-col gap-1">
                   <label className="text-gray-400 text-xs font-bold uppercase">E-mail</label>
                   <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none" placeholder="seu@email.com" />
@@ -1198,14 +1403,25 @@ const GameEngine = () => {
         </div>
       )}
 
-      <div className="flex gap-2 md:gap-4 mb-2 md:mb-4 border-b border-gray-800 w-full px-2 md:px-4 pb-2 justify-center shrink-0 relative">
-        {/* Nome do Jogador Logado */}
-        {guestUser && (
-          <div className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 flex items-center gap-1 md:gap-2 bg-gray-900/80 px-2 md:px-3 py-1 rounded-full border border-gray-700 shadow-sm z-10 pointer-events-none">
-            <span className="hidden sm:inline text-[10px] md:text-xs text-gray-400">Convidado:</span>
-            <span className="text-[10px] md:text-sm text-blue-400 font-bold truncate max-w-[100px] md:max-w-[150px]">{guestUser.username}</span>
-          </div>
-        )}
+      {/* Nome do Jogador + Botão de Vinculação (fora da barra de abas) */}
+      {guestUser && (
+        <div className="flex justify-end items-center w-full px-3 pb-1 shrink-0 gap-2">
+          <span className="text-[10px] md:text-xs text-gray-400 hidden sm:inline">
+            {(guestUser as any).auth_id ? 'Conta:' : 'Convidado:'}
+          </span>
+          <span className="text-[10px] md:text-sm text-blue-400 font-bold truncate max-w-[120px]">{guestUser.username}</span>
+          {!(guestUser as any).auth_id && (
+            <button
+              onClick={() => { setLinkEmail(''); setLinkPassword(''); setLinkUsername(''); setShowLinkModal(true); }}
+              className="text-[9px] md:text-xs bg-purple-700 hover:bg-purple-600 text-white px-2 py-0.5 rounded-full font-bold transition-colors shrink-0"
+            >
+              Vincular Conta
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-2 md:gap-4 mb-2 md:mb-4 border-b border-gray-800 w-full px-2 md:px-4 pb-2 justify-center shrink-0">
         <button
           onClick={() => { setView('canvas'); setDisplayPixels(pixelsRef.current); }}
           className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'canvas' ? 'bg-gray-800 text-white border-b-2 border-blue-500' : 'text-gray-500 hover:text-white'}`}
@@ -1219,6 +1435,43 @@ const GameEngine = () => {
           Vista do Jogo
         </button>
       </div>
+
+      {/* Modal de Vinculação de Conta */}
+      {showLinkModal && (
+        <div className="absolute inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl shadow-2xl w-full max-w-sm flex flex-col gap-4">
+            <h2 className="text-white font-bold text-xl text-center">🔗 Vincular Conta</h2>
+            <p className="text-gray-400 text-xs text-center">Seus pontos e High Score serão salvos permanentemente!</p>
+
+            <div className="flex bg-gray-950 p-1 rounded-md border border-gray-700">
+              <button onClick={() => setLinkMode('signup')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${linkMode === 'signup' ? 'bg-purple-600 text-white' : 'text-gray-500 hover:text-white'}`}>Criar Conta</button>
+              <button onClick={() => setLinkMode('login')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${linkMode === 'login' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}>Já tenho conta</button>
+            </div>
+
+            {linkMode === 'signup' && (
+              <div className="flex flex-col gap-1">
+                <label className="text-gray-400 text-xs font-bold uppercase">Nome de Usuário</label>
+                <input type="text" maxLength={15} value={linkUsername} onChange={(e) => setLinkUsername(e.target.value.toUpperCase())} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-purple-500 outline-none font-bold" placeholder="SEU_NICK" />
+              </div>
+            )}
+            <div className="flex flex-col gap-1">
+              <label className="text-gray-400 text-xs font-bold uppercase">E-mail</label>
+              <input type="email" value={linkEmail} onChange={(e) => setLinkEmail(e.target.value)} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none" placeholder="seu@email.com" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-gray-400 text-xs font-bold uppercase">Senha</label>
+              <input type="password" value={linkPassword} onChange={(e) => setLinkPassword(e.target.value)} className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none" placeholder="••••••••" />
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setShowLinkModal(false)} className="flex-1 py-2.5 text-gray-300 hover:text-white border border-gray-600 rounded-lg font-bold transition-colors">Cancelar</button>
+              <button onClick={handleLinkAccount} disabled={authLoading} className={`flex-1 py-2.5 text-white font-bold rounded-lg transition-all active:scale-95 ${linkMode === 'signup' ? 'bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800' : 'bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800'}`}>
+                {authLoading ? 'Salvando...' : linkMode === 'signup' ? 'Criar e Vincular' : 'Entrar e Vincular'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {view === 'canvas' && (
         <div className="w-full flex-1 flex flex-col items-center animate-fade-in px-4 pb-10 overflow-y-auto">
@@ -1281,6 +1534,29 @@ const GameEngine = () => {
             })}
           </div>
           <p className="text-gray-500 text-xs mt-4 text-center">Clique em um espaço vazio para abrir o estúdio de Pixel Art!</p>
+
+          {/* D-PAD MOBILE */}
+          <div className="md:hidden flex flex-col items-center gap-1 mt-4 opacity-70 select-none">
+            <p className="text-gray-600 text-[9px] mb-1 font-mono">KONAMI CODE</p>
+            <div className="flex justify-center">
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowUp', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9650;</button>
+            </div>
+            <div className="flex gap-1">
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowLeft', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9664;</button>
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowDown', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9660;</button>
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowRight', bubbles: true }))} className="w-10 h-10 rounded bg-gray-800/80 border border-gray-600 flex items-center justify-center text-white active:bg-gray-600 text-lg">&#9654;</button>
+            </div>
+            <div className="flex gap-2 mt-1">
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyB', bubbles: true }))} className="w-10 h-10 rounded-full bg-gray-800/80 border border-gray-600 text-white text-xs font-bold active:bg-gray-600">B</button>
+              <button onPointerDown={() => window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA', bubbles: true }))} className="w-10 h-10 rounded-full bg-gray-800/80 border border-gray-600 text-white text-xs font-bold active:bg-gray-600">A</button>
+            </div>
+          </div>
+        </div>
+      )}
+      S
+      {neoMode && view === 'canvas' && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-black/90 border border-green-500 text-green-400 font-mono text-xs px-4 py-2 rounded-full shadow-[0_0_20px_rgba(0,255,70,0.5)] animate-pulse pointer-events-none">
+          &#9672; MODO MATRIX ATIVADO &#9672; VIDA EXTRA ATIVA
         </div>
       )}
 
@@ -1289,7 +1565,7 @@ const GameEngine = () => {
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-6 w-full max-w-md max-h-[80vh] flex flex-col">
             <h2 className="text-2xl font-bold text-center text-white mb-4 flex items-center justify-center gap-2">
-              🏆 Ranking Global (Top 50)
+              <img src="/images/icon_trophy.png" alt="Trophy" className="w-8 h-8" /> Ranking Global (Top 50)
             </h2>
 
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar" style={{ minHeight: '300px' }}>
@@ -1515,14 +1791,14 @@ const GameEngine = () => {
             High Score: {gameState.highScore}
           </span>
           <div className="flex gap-3 md:gap-6 items-center">
-            <button onClick={handleOpenRanking} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Ranking Global">
-              🏆
+            <button onClick={handleOpenRanking} className="hover:scale-110 transition-transform" title="Ranking Global">
+              <img src="/images/icon_trophy.png" alt="Ranking" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
-            <button onClick={handleToggleMusic} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Música de Fundo">
-              {isMutedMusic ? '🔇' : '🎵'}
+            <button onClick={handleToggleMusic} className="hover:scale-110 transition-transform" title="Música de Fundo">
+              <img src={isMutedMusic ? "/images/icon_music_muted.png" : "/images/icon_music.png"} alt="Music" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
-            <button onClick={handleToggleSFX} className="text-lg md:text-xl hover:scale-110 transition-transform" title="Efeitos Sonoros">
-              {isMutedSFX ? '🔕' : '🔔'}
+            <button onClick={handleToggleSFX} className="hover:scale-110 transition-transform" title="Efeitos Sonoros">
+              <img src={isMutedSFX ? "/images/icon_sound_muted.png" : "/images/icon_sound.png"} alt="SFX" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
             <span className="text-yellow-400">Px: {displayPixels}</span>
             <span className="text-green-400">Score: {Math.floor(gameState.score)}</span>
@@ -1530,7 +1806,7 @@ const GameEngine = () => {
               onClick={() => window.dispatchEvent(new Event('toggleExternalPause'))}
               className="bg-gray-800 hover:bg-gray-700 p-2 rounded-md text-white md:hidden shadow-lg border border-gray-600"
             >
-              {gameState.isPaused ? '▶️' : '⏸️'}
+              <img src={gameState.isPaused ? '/images/icon_play.png' : '/images/icon_pause.png'} alt="Pause/Play" className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -1635,12 +1911,26 @@ const GameEngine = () => {
             )}
 
             {gameState.gameOver && (
-              <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none">
-                <h2 className="text-red-500 text-5xl md:text-7xl font-extrabold mb-4 tracking-widest">GAME OVER</h2>
-                <p className="text-gray-300 text-lg md:text-2xl mb-6">Score Final: <span className="text-green-400 font-bold">{Math.floor(gameState.score)}</span></p>
-                <p className="text-white bg-gray-800 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
-                  TOQUE NA TELA para tentar novamente
-                </p>
+              <div className={`absolute inset-0 flex flex-col items-center justify-center z-30 backdrop-blur-sm pointer-events-none ${neoMode ? 'bg-black/70' : 'bg-black/80'}`}>
+                {neoMode ? (
+                  <>
+                    <p className="text-green-400 font-mono text-xs tracking-[0.3em] mb-2 opacity-80">// SIMULATION_TERMINATED</p>
+                    <h2 className="font-extrabold mb-4 tracking-widest text-5xl md:text-7xl" style={{ color: '#00ff46', textShadow: '0 0 20px #00ff46, 0 0 40px #00cc38' }}>GAME OVER</h2>
+                    <p className="font-mono text-green-300 text-lg md:text-2xl mb-2">score.final = <span className="text-white font-bold">{Math.floor(gameState.score)}</span></p>
+                    <p className="text-green-600 font-mono text-xs mb-6">&gt; neo.shield = th3_ch0s3n_0N3</p>
+                    <p className="font-mono text-green-400 border border-green-500 px-6 py-3 md:px-8 md:py-4 rounded animate-pulse font-bold" style={{ boxShadow: '0 0 15px rgba(0,255,70,0.4)' }}>
+                      [ TOQUE PARA REINICIAR ]
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-red-500 text-5xl md:text-7xl font-extrabold mb-4 tracking-widest">GAME OVER</h2>
+                    <p className="text-gray-300 text-lg md:text-2xl mb-6">Score Final: <span className="text-green-400 font-bold">{Math.floor(gameState.score)}</span></p>
+                    <p className="text-white bg-gray-800 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
+                      TOQUE NA TELA para tentar novamente
+                    </p>
+                  </>
+                )}
               </div>
             )}
           </div>
