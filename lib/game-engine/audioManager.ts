@@ -11,16 +11,20 @@ export class AudioManager {
 
   public loadSound(name: string, path: string) {
     if (typeof window !== 'undefined') {
-      const audio = new Audio(path);
-      this.sounds.set(name, audio);
+      if (!this.sounds.has(name)) {
+        const audio = new Audio(path);
+        this.sounds.set(name, audio);
+      }
     }
   }
 
   public loadMusic(name: string, path: string) {
     if (typeof window !== 'undefined') {
-      const audio = new Audio(path);
-      audio.loop = true;
-      this.sounds.set(name, audio);
+      if (!this.sounds.has(name)) {
+        const audio = new Audio(path);
+        audio.loop = true;
+        this.sounds.set(name, audio);
+      }
     }
   }
 
