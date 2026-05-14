@@ -56,6 +56,12 @@ const GameEngine = () => {
   const [vazioTapCount, setVazioTapCount] = useState(0);
   const [dpadUnlocked, setDpadUnlocked] = useState(false);
   const vazioTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // --- NOVO: Modo Babilônico ---
+  const [babylonMode, setBabylonMode] = useState(false);
+  const babylonModeRef = useRef(false);
+  const babylonRestartRef = useRef(false);
+  // -----------------------------
   // ----------------------------------------
 
   // --- NOVO: Loja de Skins ---
@@ -73,11 +79,26 @@ const GameEngine = () => {
   const skinImagesRef = useRef<Record<string, HTMLImageElement>>({});
   // ---------------------------
 
-  const handleOpenRanking = async () => {
+  const [rankingMode, setRankingMode] = useState<'normal' | 'babylon'>('normal');
+
+  const handleOpenRanking = async (mode: 'normal' | 'babylon' = 'normal') => {
     setShowRankingModal(true);
+    setRankingMode(mode);
     setLoadingRanking(true);
-    const { data, error } = await supabase.from('players').select('username, high_score').order('high_score', { ascending: false }).limit(50);
-    if (data) setRankingData(data);
+    setRankingData([]);
+
+    if (mode === 'babylon') {
+      const localScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
+      setRankingData(localScore > 0 ? [{ username: guestUser?.username || 'VOCÊ', high_score: localScore }] : []);
+      setLoadingRanking(false);
+      return;
+    }
+
+    const { data, error } = await supabase.from('players').select('username, high_score').order('high_score', { ascending: false, nullsFirst: false }).limit(50);
+    if (data) {
+      const mapped = data.map((p: any) => ({ username: p.username, high_score: p.high_score || 0 }));
+      setRankingData(mapped);
+    }
     setLoadingRanking(false);
   };
   // -----------------------------
@@ -169,6 +190,8 @@ const GameEngine = () => {
         neoModeRef.current = next;
         setNeoMode(next);
         if (next) neoExtraLifeRef.current = 1;
+        const musicKey = next ? 'bgm_matrix' : babylonModeRef.current ? 'bgm_hardmode' : 'bgm';
+        gameAudio.playMusic(musicKey);
       }
     };
     window.addEventListener('keydown', handleKonami);
@@ -469,6 +492,8 @@ const GameEngine = () => {
 
   useEffect(() => {
     gameAudio.loadMusic('bgm', '/sounds/bgm.mp3');
+    gameAudio.loadMusic('bgm_matrix', '/sounds/bgm_matrix.mp3');
+    gameAudio.loadMusic('bgm_hardmode', '/sounds/bgm_hardmode.mp3');
     gameAudio.loadSound('jump', '/sounds/pop.wav');
     gameAudio.loadSound('jump_trampoline', '/sounds/jump.wav');
     gameAudio.loadSound('coin', '/sounds/coin.wav');
@@ -603,7 +628,7 @@ const GameEngine = () => {
     initMatrixDrops(canvas.width, canvas.height);
     // ------------------------------------
 
-    let currentHighScore = parseInt(localStorage.getItem('pixelArenaHighScore') || '0');
+    let currentHighScore = parseInt(localStorage.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
     setGameState(prev => ({ ...prev, highScore: currentHighScore }));
 
 
@@ -643,14 +668,18 @@ const GameEngine = () => {
       isGameOver = true;
       shakeFrames = 15;
       hasBeatenHighScore = false;
+      gameAudio.stopMusic();
       gameAudio.play('death');
 
       if (Math.floor(score) > currentHighScore) {
         currentHighScore = Math.floor(score);
-        localStorage.setItem('pixelArenaHighScore', currentHighScore.toString());
-        // Sincroniza Highscore no Cloud
-        if (guestUserRef.current) {
-          supabase.from('players').update({ high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+        if (babylonModeRef.current) {
+          localStorage.setItem(GAME_CONSTANTS.BABYLON_LS_KEY, currentHighScore.toString());
+        } else {
+          localStorage.setItem('pixelArenaHighScore', currentHighScore.toString());
+          if (guestUserRef.current) {
+            supabase.from('players').update({ high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+          }
         }
       }
 
@@ -666,7 +695,6 @@ const GameEngine = () => {
 
       if (!hasStarted) {
         if (countdownUntil === 0) {
-          gameAudio.playMusic('bgm');
           countdownUntil = Date.now() + 3000;
           setGameState(prev => ({ ...prev, hasStarted: true }));
         }
@@ -680,11 +708,10 @@ const GameEngine = () => {
         hasStarted = false;
         score = 0;
         shakeFrames = 0;
-        gameSpeed = 3;
+        gameSpeed = babylonModeRef.current ? GAME_CONSTANTS.MAX_GAME_SPEED : 3;
         hasBeatenHighScore = false;
         countdownUntil = Date.now() + 3000;
         setGameState(prev => ({ ...prev, gameOver: false, hasStarted: true, score: 0 }));
-        // Garante que o render loop reinicie mesmo se estava parado
         window.cancelAnimationFrame(animationFrameId);
         lastFrameTime = performance.now();
         render();
@@ -692,6 +719,7 @@ const GameEngine = () => {
         if (countdownUntil > Date.now()) return;
         player.velocity = player.jumpStrength;
         gameAudio.play('jump');
+
         // Trail colorido baseado na skin ativa
         const skinDef = SKINS.find(s => s.id === activeSkinRef.current);
         const trailColor = skinDef?.trailColor || 'rgba(120, 200, 80, ALPHA)';
@@ -743,6 +771,25 @@ const GameEngine = () => {
 
 
     const render = (timestamp?: number) => {
+      if (babylonRestartRef.current) {
+        babylonRestartRef.current = false;
+        if (hasStarted && !isGameOver) {
+          obstacles = [];
+          activeParallaxAds = [];
+          particlePool.clear();
+          player.y = Math.min(150, canvas.height / 2);
+          player.velocity = 0;
+          score = 0;
+          shakeFrames = 0;
+          gameSpeed = GAME_CONSTANTS.MAX_GAME_SPEED;
+          hasBeatenHighScore = false;
+          isGameOver = false;
+          hasStarted = false;
+          countdownUntil = Date.now() + 3000;
+          gameAudio.stopMusic();
+          setGameState(prev => ({ ...prev, hasStarted: false, gameOver: false, score: 0 }));
+        }
+      }
       if (isGameOver && shakeFrames <= 0) return;
       if (isPaused || view === 'canvas' || view === 'brecho') {
         lastFrameTime = timestamp || performance.now();
@@ -767,6 +814,8 @@ const GameEngine = () => {
         if (!hasStarted) {
           hasStarted = true;
           setGameState(prev => ({ ...prev, hasStarted: true }));
+          const musicKey = neoModeRef.current ? 'bgm_matrix' : babylonModeRef.current ? 'bgm_hardmode' : 'bgm';
+          gameAudio.playMusic(musicKey);
           player.velocity = player.jumpStrength;
           gameAudio.play('jump');
         }
@@ -829,7 +878,15 @@ const GameEngine = () => {
         }
         player.y += player.velocity;
         score += 0.05 * dt;
-        gameSpeed = 3 + (score / 150);
+        if (babylonModeRef.current) {
+          gameSpeed = GAME_CONSTANTS.MAX_GAME_SPEED;
+        } else {
+          gameSpeed = 3 + (score / 150);
+        }
+
+        if (babylonModeRef.current && shakeFrames <= 0 && Math.random() < GAME_CONSTANTS.BABYLON_RANDOM_SHAKE_CHANCE * dt) {
+          shakeFrames = 5 + Math.floor(Math.random() * 10);
+        }
 
         if (player.rocketTimer > 0) {
           player.rocketTimer -= dt;
@@ -1027,6 +1084,29 @@ const GameEngine = () => {
           } else {
             obs.x -= gameSpeed * dt;
           }
+
+          // Movimento babilônico de plataformas
+          if (babylonModeRef.current && obs.isBrand && obs.moveAmplitude > 0) {
+            if (obs.moveType === 'lateral') {
+              obs.x += Math.sin(Date.now() * 0.002 + obs.movePhase) * obs.moveAmplitude * 0.5;
+            } else if (obs.moveType === 'vertical' && obs.origY !== undefined) {
+              const elapsed = (Date.now() - obs.movePhase) / 1000;
+              const cycle = 2.6;
+              const t = elapsed % cycle;
+              let offset = 0;
+              if (t < 1) offset = (t / 1) * obs.moveAmplitude;
+              else if (t < 1.3) offset = obs.moveAmplitude;
+              else if (t < 2.3) offset = obs.moveAmplitude * (1 - (t - 1.3) / 1);
+              obs.y = obs.origY + offset;
+            }
+          }
+        }
+
+        // Flicker babilônico: obstáculos piscam aleatoriamente
+        let babylonFlicker = 1;
+        if (babylonModeRef.current) {
+          babylonFlicker = Math.random() < 0.10 ? 0.2 + Math.random() * 0.5 : 1;
+          if (babylonFlicker < 1) ctx.save();
         }
 
         // --- NOVO: Renderiza apenas plataformas físicas (exclui artes base64 de parallax) ---
@@ -1071,6 +1151,8 @@ const GameEngine = () => {
             obs.height
           );
 
+          if (babylonFlicker < 1) ctx.globalAlpha = babylonFlicker;
+
           if (cachedCanvas) {
             ctx.drawImage(cachedCanvas, obs.x, obs.y);
           } else {
@@ -1100,7 +1182,10 @@ const GameEngine = () => {
               }
             }
           }
+          if (babylonFlicker < 1) ctx.restore();
         } else {
+          if (babylonFlicker < 1) ctx.save();
+          if (babylonFlicker < 1) ctx.globalAlpha = babylonFlicker;
           // Apenas renderiza itens que não são baseados em grade
           if (!obs.isBrand) {
             const imgRef = obs.isMagnet ? magnetImageRef : obs.isRedCoin ? redCoinImageRef : coinImageRef;
@@ -1190,6 +1275,7 @@ const GameEngine = () => {
               }
             }
           }
+          if (babylonFlicker < 1) ctx.restore();
         }
 
         if (obs.isBrand) {
@@ -1205,7 +1291,7 @@ const GameEngine = () => {
               if (obs.hasSpikes && obs.spikeZones) {
                 const playerCenterX = player.x + player.width / 2;
                 const landedOnSpike = obs.spikeZones.some(
-                  (zone: {start: number, end: number}) => playerCenterX > obs.x + zone.start && playerCenterX < obs.x + zone.end
+                  (zone: { start: number, end: number }) => playerCenterX > obs.x + zone.start && playerCenterX < obs.x + zone.end
                 );
                 if (landedOnSpike) {
                   triggerGameOver();
@@ -1354,14 +1440,15 @@ const GameEngine = () => {
         const brandHeight = brand ? rows * 5 : 40;
         const brandWidth = brand ? (brandHeight / rows) * cols : 20;
 
-        const hasSpikes = !!brand && !isBreakable && !isBouncy && Math.random() < GAME_CONSTANTS.SPIKE_TRAP_CHANCE;
-        let spikeZones: {start: number, end: number}[] = [];
+        const spikeChance = babylonModeRef.current ? GAME_CONSTANTS.BABYLON_SPIKE_TRAP_CHANCE : GAME_CONSTANTS.SPIKE_TRAP_CHANCE;
+        const hasSpikes = !!brand && !isBreakable && !isBouncy && Math.random() < spikeChance;
+        let spikeZones: { start: number, end: number }[] = [];
         if (hasSpikes) {
           const numZones = Math.random() < 0.5 ? 1 : 2;
           for (let z = 0; z < numZones; z++) {
             const zoneWidth = (0.3 + Math.random() * 0.2) * brandWidth;
             const zoneStart = Math.random() * (brandWidth - zoneWidth);
-            spikeZones.push({start: zoneStart, end: zoneStart + zoneWidth});
+            spikeZones.push({ start: zoneStart, end: zoneStart + zoneWidth });
           }
         }
 
@@ -1378,8 +1465,12 @@ const GameEngine = () => {
           isBrand: !!brand,
           name: brand?.name || 'MOEDA',
           pixel_data: brand?.pixel_data,
-          isMagnet: !brand && Math.random() < 0.1, // 10% chance
-          isRedCoin: !brand && Math.random() < 0.15, // 15% chance entre moedas
+          isMagnet: !brand && Math.random() < (babylonModeRef.current ? 0 : 0.1), // Sem ímãs no Babylon
+          isRedCoin: !brand && Math.random() < (babylonModeRef.current ? GAME_CONSTANTS.BABYLON_RED_COIN_CHANCE : 0.15), // 15% normal, 60% Babylon
+          origY: brand ? yPos : undefined,
+          moveType: brand && babylonModeRef.current ? (() => { const r = Math.random(); return r < 0.33 ? 'none' : r < 0.66 ? 'lateral' : 'vertical'; })() : 'none',
+          movePhase: brand ? Date.now() + Math.random() * 2000 : 0,
+          moveAmplitude: babylonModeRef.current && brand ? 10 + Math.random() * 15 : 0,
           isBaitCoin: false,
           hasSpikes: hasSpikes,
           spikeZones: hasSpikes ? spikeZones : undefined,
@@ -1786,7 +1877,7 @@ const GameEngine = () => {
 
       <div className="flex gap-2 md:gap-4 mb-2 md:mb-4 border-b border-gray-800 w-full px-2 md:px-4 pb-2 justify-center shrink-0">
         <button
-          onClick={() => { setView('canvas'); setDisplayPixels(pixelsRef.current); }}
+          onClick={() => { gameAudio.stopMusic(); setView('canvas'); setDisplayPixels(pixelsRef.current); }}
           className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'canvas' ? 'bg-gray-800 text-white border-b-2 border-blue-500' : 'text-gray-500 hover:text-white'}`}
         >
           Mural
@@ -1798,7 +1889,7 @@ const GameEngine = () => {
           Jogo
         </button>
         <button
-          onClick={() => { setView('brecho'); setDisplayPixels(pixelsRef.current); }}
+          onClick={() => { gameAudio.stopMusic(); setView('brecho'); setDisplayPixels(pixelsRef.current); }}
           className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'brecho' ? 'bg-gray-800 text-white border-b-2 border-yellow-500' : 'text-gray-500 hover:text-white'}`}
         >
           Brechó
@@ -1959,9 +2050,14 @@ const GameEngine = () => {
       {showRankingModal && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-6 w-full max-w-md max-h-[80vh] flex flex-col">
-            <h2 className="text-2xl font-bold text-center text-white mb-4 flex items-center justify-center gap-2">
-              <img src="/images/icon_trophy.png" alt="Trophy" className="w-8 h-8" /> Ranking Global (Top 50)
+            <h2 className="text-2xl font-bold text-center text-white mb-2 flex items-center justify-center gap-2">
+              <img src="/images/icon_trophy.png" alt="Trophy" className="w-8 h-8" /> Ranking Global
             </h2>
+
+            <div className="flex bg-gray-950 p-1 rounded-md border border-gray-700 mb-3">
+              <button onClick={() => handleOpenRanking('normal')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${rankingMode === 'normal' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}>Normal</button>
+              <button onClick={() => handleOpenRanking('babylon')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${rankingMode === 'babylon' ? 'bg-red-600 text-white' : 'text-gray-500 hover:text-white'}`}>⚡ Babilônico</button>
+            </div>
 
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar" style={{ minHeight: '300px' }}>
               {loadingRanking ? (
@@ -2298,11 +2394,31 @@ const GameEngine = () => {
       <div className={`flex-1 w-full flex flex-col items-center relative ${view === 'game' ? 'flex' : 'hidden'}`}>
         <div className="mb-2 text-white text-sm md:text-xl font-bold flex justify-between items-center w-full px-4 md:px-8 shrink-0">
           <span className="text-blue-400 text-xs md:text-lg flex items-center gap-2">
-            High Score: {gameState.highScore}
+            {babylonMode ? '⚡' : ''} High Score: {babylonMode
+              ? parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0')
+              : gameState.highScore}
           </span>
-          <div className="flex gap-3 md:gap-6 items-center">
+          <div className="flex gap-2 md:gap-3 items-center">
 
-            <button onClick={handleOpenRanking} className="hover:scale-110 transition-transform" title="Ranking Global">
+            <button
+              onClick={() => {
+                const next = !babylonModeRef.current;
+                babylonModeRef.current = next;
+                setBabylonMode(next);
+                if (next) babylonRestartRef.current = true;
+                const musicKey = neoModeRef.current ? 'bgm_matrix' : next ? 'bgm_hardmode' : 'bgm';
+                gameAudio.playMusic(musicKey);
+              }}
+              className={`px-2 md:px-3 py-1 text-[9px] md:text-xs font-bold rounded-lg transition-all active:scale-95 border ${babylonMode
+                ? 'bg-red-700 text-white border-red-500 shadow-[0_0_10px_rgba(255,0,0,0.5)] animate-pulse'
+                : 'bg-gray-800 text-gray-400 border-gray-600 hover:bg-red-900 hover:text-red-300'
+                }`}
+              title="Ativar Modo Babilônico"
+            >
+              ⚡ BABILÔNICO
+            </button>
+
+            <button onClick={() => handleOpenRanking(babylonMode ? 'babylon' : 'normal')} className="hover:scale-110 transition-transform" title="Ranking Global">
               <img src="/images/icon_trophy.png" alt="Ranking" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
             <button onClick={handleToggleMusic} className="hover:scale-110 transition-transform" title="Música de Fundo">
@@ -2413,7 +2529,7 @@ const GameEngine = () => {
         `}</style>
 
         <div className="flex-1 w-full p-2 md:p-6 flex flex-col relative bg-black items-center justify-center">
-          <div ref={containerRef} className={`w-full h-full relative overflow-hidden bg-[#0f172a] crt-container shadow-[0_0_50px_rgba(59,130,246,0.15)] border-2 border-gray-900 ${typeof window !== 'undefined' && window.innerWidth < 768 ? 'crt-mobile-simple' : ''}`}>
+          <div ref={containerRef} className={`w-full h-full relative overflow-hidden bg-[#0f172a] crt-container shadow-[0_0_50px_rgba(59,130,246,0.15)] border-2 ${babylonMode ? 'border-red-700 shadow-[0_0_60px_rgba(255,0,0,0.3)]' : 'border-gray-900'} ${typeof window !== 'undefined' && window.innerWidth < 768 ? 'crt-mobile-simple' : ''}`}>
             <div className="crt-glitch-layer absolute inset-0">
               <canvas
                 ref={canvasRef}
@@ -2428,6 +2544,9 @@ const GameEngine = () => {
             {!gameState.hasStarted && !gameState.gameOver && (
               <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-30 pointer-events-none">
                 <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-2 tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-green-400 text-center">OLIV</h2>
+                {babylonMode && (
+                  <p className="text-red-500 text-xs md:text-sm font-bold mb-1 tracking-[0.2em] animate-pulse">⚡ MODO BABILÔNICO ATIVO ⚡</p>
+                )}
                 <p className="text-gray-300 text-sm md:text-xl mb-8 text-center px-4">Navegue pelo canvas e conquiste território.</p>
                 <p className="text-white bg-blue-600 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
                   TOQUE NA TELA para começar
@@ -2456,6 +2575,9 @@ const GameEngine = () => {
                   </>
                 ) : (
                   <>
+                    {babylonMode && (
+                      <p className="text-red-500 font-bold text-xs tracking-[0.3em] mb-1 animate-pulse">⚡ MODO BABILÔNICO ⚡</p>
+                    )}
                     <h2 className="text-red-500 text-5xl md:text-7xl font-extrabold mb-4 tracking-widest">GAME OVER</h2>
                     <p className="text-gray-300 text-lg md:text-2xl mb-6">Score Final: <span className="text-green-400 font-bold">{Math.floor(gameState.score)}</span></p>
                     <p className="text-white bg-gray-800 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
