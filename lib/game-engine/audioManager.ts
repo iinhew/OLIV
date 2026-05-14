@@ -36,7 +36,16 @@ export class AudioManager {
     }
   }
 
+  public stopMusic() {
+    if (this.currentMusic) {
+      this.currentMusic.pause();
+      this.currentMusic.currentTime = 0;
+      this.currentMusic = null;
+    }
+  }
+
   public playMusic(name: string) {
+    this.stopMusic();
     const music = this.sounds.get(name);
     if (music) {
       this.currentMusic = music;
