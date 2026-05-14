@@ -154,6 +154,7 @@ const GameEngine = () => {
   const crownImageRef = useRef<HTMLImageElement | null>(null);
   const coinImageRef = useRef<HTMLImageElement | null>(null);
   const magnetImageRef = useRef<HTMLImageElement | null>(null);
+  const redCoinImageRef = useRef<HTMLImageElement | null>(null);
 
   // --- Konami Code listener (ativo na vista do canvas) ---
   useEffect(() => {
@@ -475,6 +476,7 @@ const GameEngine = () => {
     gameAudio.loadSound('pause', '/sounds/pause.wav');
     gameAudio.loadSound('break', '/sounds/break.wav');
     gameAudio.loadSound('magnet', '/sounds/ima.wav');
+    gameAudio.loadSound('redcoin', '/sounds/redcoin.wav');
 
     const oliveImg = new Image();
     oliveImg.src = '/images/olive.png';
@@ -495,6 +497,10 @@ const GameEngine = () => {
     const magnetImg = new Image();
     magnetImg.src = '/images/ima.png';
     magnetImageRef.current = magnetImg;
+
+    const redCoinImg = new Image();
+    redCoinImg.src = '/images/redcoin.png';
+    redCoinImageRef.current = redCoinImg;
 
     // Pré-carrega TODAS as imagens de skins
     SKINS.forEach(skin => {
@@ -577,6 +583,7 @@ const GameEngine = () => {
     let gameSpeed = GAME_CONSTANTS.INITIAL_GAME_SPEED;
     let hasBeatenHighScore = false;
     let magnetActiveUntil = 0;
+    let heavyGravityUntil = 0; // --- NOVO: Timestamp até quando a gravidade fica 2x (Red Coin debuff)
     let countdownUntil = 0;
     let lastParallaxAdId = -1; // Anti-duplicata: rastreia última arte de fundo
     let lastBrandId = -1;      // Anti-duplicata: rastreia última plataforma
@@ -815,7 +822,11 @@ const GameEngine = () => {
 
       // 2. Lógica de Física e Geração de Artes de Fundo (Parallax Ads)
       if (isPhysicsActive) {
-        player.velocity += player.gravity * dt;
+        if (heavyGravityUntil > Date.now()) {
+          player.velocity += player.gravity * GAME_CONSTANTS.HEAVY_GRAVITY_MULTIPLIER * dt;
+        } else {
+          player.velocity += player.gravity * dt;
+        }
         player.y += player.velocity;
         score += 0.05 * dt;
         gameSpeed = 3 + (score / 150);
@@ -965,6 +976,11 @@ const GameEngine = () => {
         ctx.fillRect(player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight), drawWidth, drawHeight);
       }
 
+      if (heavyGravityUntil > Date.now()) {
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.25)';
+        ctx.fillRect(player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight), drawWidth, drawHeight);
+      }
+
       // Indicador de vida extra Neo
       if (neoModeRef.current && neoExtraLifeRef.current > 0) {
         ctx.fillStyle = 'rgba(0,255,70,0.9)';
@@ -1069,10 +1085,25 @@ const GameEngine = () => {
             ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
             ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
           }
+
+          if (obs.hasSpikes && obs.spikeZones) {
+            const spikeBright = 0.6 + Math.sin(Date.now() / 150) * 0.4;
+            for (const zone of obs.spikeZones) {
+              for (let sx = obs.x + zone.start; sx < obs.x + zone.end; sx += 4) {
+                ctx.beginPath();
+                ctx.moveTo(sx, obs.y);
+                ctx.lineTo(sx + 2, obs.y - GAME_CONSTANTS.SPIKE_HEIGHT);
+                ctx.lineTo(sx + 4, obs.y);
+                ctx.closePath();
+                ctx.fillStyle = `rgba(255, ${Math.floor(60 * spikeBright)}, ${Math.floor(30 * spikeBright)}, ${spikeBright})`;
+                ctx.fill();
+              }
+            }
+          }
         } else {
           // Apenas renderiza itens que não são baseados em grade
           if (!obs.isBrand) {
-            const imgRef = obs.isMagnet ? magnetImageRef : coinImageRef;
+            const imgRef = obs.isMagnet ? magnetImageRef : obs.isRedCoin ? redCoinImageRef : coinImageRef;
             if (imgRef.current && imgRef.current.complete) {
               let sourceX = 0, sourceY = 0, sourceSizeX = 0, sourceSizeY = 0;
               let destX = obs.x - 5;
@@ -1117,6 +1148,13 @@ const GameEngine = () => {
                 sourceSizeX = size;
                 sourceSizeY = size;
 
+                if (obs.isBaitCoin) {
+                  destW = (obs.width + 10) * GAME_CONSTANTS.BAIT_COIN_SIZE_MULTIPLIER;
+                  destH = (obs.height + 10) * GAME_CONSTANTS.BAIT_COIN_SIZE_MULTIPLIER;
+                  destX = obs.x + (obs.width / 2) - (destW / 2);
+                  destY = obs.y + (obs.height / 2) - (destH / 2);
+                }
+
                 // Removed shadowBlur for mobile performance
               }
 
@@ -1125,6 +1163,24 @@ const GameEngine = () => {
                 sourceX, sourceY, sourceSizeX, sourceSizeY,
                 destX, destY, destW, destH
               );
+
+              if (obs.isBaitCoin) {
+                const glowAlpha = 0.3 + Math.sin(Date.now() / 200) * 0.2;
+                ctx.save();
+                ctx.globalAlpha = glowAlpha;
+                const cx = destX + destW / 2;
+                const cy = destY + destH / 2;
+                const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, destW * 0.8);
+                grad.addColorStop(0, 'rgba(255, 215, 0, 0.6)');
+                grad.addColorStop(0.5, 'rgba(255, 215, 0, 0.2)');
+                grad.addColorStop(1, 'rgba(255, 215, 0, 0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(cx - destW * 0.8, cy - destH * 0.8, destW * 1.6, destH * 1.6);
+                ctx.restore();
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 10px Arial';
+                ctx.fillText('x5', destX + destW / 2 - 7, destY - 5);
+              }
 
               // Removed shadowBlur for mobile performance
             } else {
@@ -1146,6 +1202,16 @@ const GameEngine = () => {
         if (isPhysicsActive && PhysicsEngine.checkCollision({ x: player.x, y: renderY, width: player.width, height: player.height }, obs)) {
           if (obs.isBrand) {
             if (player.velocity > 0 && player.y + player.height - player.velocity <= obs.y + 10) {
+              if (obs.hasSpikes && obs.spikeZones) {
+                const playerCenterX = player.x + player.width / 2;
+                const landedOnSpike = obs.spikeZones.some(
+                  (zone: {start: number, end: number}) => playerCenterX > obs.x + zone.start && playerCenterX < obs.x + zone.end
+                );
+                if (landedOnSpike) {
+                  triggerGameOver();
+                  break;
+                }
+              }
               player.y = obs.y - player.height;
               player.velocity = 0;
 
@@ -1185,24 +1251,56 @@ const GameEngine = () => {
           } else {
             obstacles.splice(i, 1);
 
-            for (let j = 0; j < 10; j++) {
-              particlePool.spawn(
-                obs.x + obs.width / 2, obs.y + obs.height / 2,
-                (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6,
-                1.0, true
-              );
-            }
-
             if (obs.isMagnet) {
+              for (let j = 0; j < 10; j++) {
+                particlePool.spawn(
+                  obs.x + obs.width / 2, obs.y + obs.height / 2,
+                  (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6,
+                  1.0, true
+                );
+              }
               gameAudio.play('magnet');
               magnetActiveUntil = Date.now() + 10000;
+            } else if (obs.isRedCoin) {
+              for (let j = 0; j < 15; j++) {
+                particlePool.spawn(
+                  obs.x + obs.width / 2, obs.y + obs.height / 2,
+                  (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6,
+                  1.0, false, 'rgba(255, 0, 0, ALPHA)'
+                );
+              }
+              shakeFrames = 20;
+              heavyGravityUntil = Date.now() + GAME_CONSTANTS.HEAVY_GRAVITY_DURATION_MS;
+              gameAudio.play('redcoin');
+            } else if (obs.isBaitCoin) {
+              for (let j = 0; j < 20; j++) {
+                particlePool.spawn(
+                  obs.x + obs.width / 2, obs.y + obs.height / 2,
+                  (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8,
+                  1.5, true
+                );
+              }
+              gameAudio.play('coin');
+              pixelsRef.current += GAME_CONSTANTS.BAIT_COIN_VALUE;
+              localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+              setDisplayPixels(pixelsRef.current);
+              if (guestUserRef.current) {
+                supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
+              }
+              score += GAME_CONSTANTS.BAIT_COIN_SCORE;
             } else {
+              for (let j = 0; j < 10; j++) {
+                particlePool.spawn(
+                  obs.x + obs.width / 2, obs.y + obs.height / 2,
+                  (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6,
+                  1.0, true
+                );
+              }
               gameAudio.play('coin');
               pixelsRef.current += 1;
               localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
               if (pixelsRef.current % 5 === 0) {
                 setDisplayPixels(pixelsRef.current);
-                // Sincroniza Pixels no Cloud
                 if (guestUserRef.current) {
                   supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
                 }
@@ -1256,6 +1354,17 @@ const GameEngine = () => {
         const brandHeight = brand ? rows * 5 : 40;
         const brandWidth = brand ? (brandHeight / rows) * cols : 20;
 
+        const hasSpikes = !!brand && !isBreakable && !isBouncy && Math.random() < GAME_CONSTANTS.SPIKE_TRAP_CHANCE;
+        let spikeZones: {start: number, end: number}[] = [];
+        if (hasSpikes) {
+          const numZones = Math.random() < 0.5 ? 1 : 2;
+          for (let z = 0; z < numZones; z++) {
+            const zoneWidth = (0.3 + Math.random() * 0.2) * brandWidth;
+            const zoneStart = Math.random() * (brandWidth - zoneWidth);
+            spikeZones.push({start: zoneStart, end: zoneStart + zoneWidth});
+          }
+        }
+
         const yPos = brand
           ? Math.random() * (canvas.height - brandHeight - 40) + 40
           : Math.random() * (canvas.height - 40);
@@ -1270,9 +1379,42 @@ const GameEngine = () => {
           name: brand?.name || 'MOEDA',
           pixel_data: brand?.pixel_data,
           isMagnet: !brand && Math.random() < 0.1, // 10% chance
+          isRedCoin: !brand && Math.random() < 0.15, // 15% chance entre moedas
+          isBaitCoin: false,
+          hasSpikes: hasSpikes,
+          spikeZones: hasSpikes ? spikeZones : undefined,
           isBreakable: isBreakable,
           isBouncy: isBouncy
         });
+
+        // --- Geração de Moedas Isca após plataformas ---
+        if (brand && Math.random() < GAME_CONSTANTS.BAIT_COIN_SPAWN_CHANCE) {
+          const isOnCeiling = Math.random() < 0.5;
+          const baitX = isOnCeiling
+            ? canvas.width + 100 + Math.random() * 100
+            : canvas.width + 80; // Encostada na lateral esquerda da plataforma (sem ficar dentro)
+          const baitY = isOnCeiling
+            ? 5 // Quase no teto (zona mortal)
+            : yPos + brandHeight / 2; // Meio da altura da plataforma
+
+          obstacles.push({
+            x: baitX,
+            y: baitY,
+            width: 20,
+            height: 20,
+            color: '#ffd700',
+            isBrand: false,
+            name: 'ISCA',
+            pixel_data: undefined,
+            isMagnet: false,
+            isRedCoin: false,
+            isBaitCoin: true,
+            hasSpikes: false,
+            spikeZones: undefined,
+            isBreakable: false,
+            isBouncy: false
+          });
+        }
       }
 
       if (isCountingDown) {
