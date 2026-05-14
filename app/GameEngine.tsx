@@ -36,6 +36,9 @@ const GameEngine = () => {
   const [linkUsername, setLinkUsername] = useState('');
   const guestUserRef = useRef<{ id: string, username: string } | null>(null);
   const [guestUser, setGuestUser] = useState<{ id: string, username: string } | null>(null);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [editProfileName, setEditProfileName] = useState('');
 
   // --- NOVO: Ranking Global ---
   const [showRankingModal, setShowRankingModal] = useState(false);
@@ -1319,17 +1322,38 @@ const GameEngine = () => {
   const handleSignUp = async () => {
     if (!email || !password) return alert("Preencha email e senha");
     setAuthLoading(true);
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = password.trim();
+    const { data, error } = await supabase.auth.signUp({ email: cleanEmail, password: cleanPassword });
     if (error) {
       alert(error.message);
       setAuthLoading(false);
       return;
     }
     if (data.user) {
+      // Verifica se o email precisa de confirmação.
+      // Quando "Confirm email" está ativo no Supabase, signUp retorna user com identities vazio
+      // e email_confirmed_at como null. O usuário não conseguirá fazer login depois.
+      const needsConfirmation = !data.user.email_confirmed_at && (!data.user.identities || data.user.identities.length === 0);
+      if (needsConfirmation) {
+        // O email já pode existir (Supabase retorna identities vazio para emails duplicados com confirmação ativa)
+        // Tentamos fazer login direto para verificar
+        const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email: cleanEmail, password: cleanPassword });
+        if (loginError) {
+          alert("Conta criada! Verifique seu e-mail para confirmar o cadastro antes de fazer login. (Ou desative a confirmação de e-mail no painel do Supabase)");
+          setAuthLoading(false);
+          return;
+        }
+        // Se o login funcionou, o user já existia e estava confirmado
+        if (loginData.user) {
+          data.user = loginData.user;
+        }
+      }
+
       const savedId = localStorage.getItem('olivGuestId');
       if (savedId) {
         // Vincula a conta existente ao auth
-        const usernameToUse = signUpUsername.trim() || email.split('@')[0].substring(0, 15).toUpperCase();
+        const usernameToUse = signUpUsername.trim() || cleanEmail.split('@')[0].substring(0, 15).toUpperCase();
         await supabase.from('players').update({ auth_id: data.user.id, username: usernameToUse }).eq('id', savedId);
         const { data: player } = await supabase.from('players').select('*').eq('id', savedId).single();
         if (player) {
@@ -1337,11 +1361,21 @@ const GameEngine = () => {
           setGuestUser(player);
         }
       } else {
-        const finalName = signUpUsername.trim() || email.split('@')[0].substring(0, 15).toUpperCase();
-        const { data: player } = await supabase.from('players').insert([{ username: finalName, pixels: pixelsRef.current, high_score: gameState.highScore, auth_id: data.user.id }]).select('*').single();
-        if (player) {
-          guestUserRef.current = player;
-          setGuestUser(player);
+        // Verifica se já existe um player com este auth_id (caso de re-registro)
+        const { data: existingPlayer } = await supabase.from('players').select('*').eq('auth_id', data.user.id).single();
+        if (existingPlayer) {
+          guestUserRef.current = existingPlayer;
+          setGuestUser(existingPlayer);
+          pixelsRef.current = existingPlayer.pixels;
+          setDisplayPixels(existingPlayer.pixels);
+          setGameState(prev => ({ ...prev, highScore: existingPlayer.high_score }));
+        } else {
+          const finalName = signUpUsername.trim() || cleanEmail.split('@')[0].substring(0, 15).toUpperCase();
+          const { data: player } = await supabase.from('players').insert([{ username: finalName, pixels: pixelsRef.current, high_score: gameState.highScore, auth_id: data.user.id }]).select('*').single();
+          if (player) {
+            guestUserRef.current = player;
+            setGuestUser(player);
+          }
         }
       }
       setShowGuestModal(false);
@@ -1353,18 +1387,20 @@ const GameEngine = () => {
     if (!linkEmail || !linkPassword) return alert('Preencha email e senha');
     setAuthLoading(true);
     const savedId = guestUserRef.current?.id;
+    const cleanEmail = linkEmail.trim().toLowerCase();
+    const cleanLinkPassword = linkPassword.trim();
 
     if (linkMode === 'signup') {
-      const { data, error } = await supabase.auth.signUp({ email: linkEmail, password: linkPassword });
+      const { data, error } = await supabase.auth.signUp({ email: cleanEmail, password: cleanLinkPassword });
       if (error) { alert(error.message); setAuthLoading(false); return; }
       if (data.user && savedId) {
-        const usernameToUse = linkUsername.trim() || linkEmail.split('@')[0].substring(0, 15).toUpperCase();
+        const usernameToUse = linkUsername.trim() || cleanEmail.split('@')[0].substring(0, 15).toUpperCase();
         await supabase.from('players').update({ auth_id: data.user.id, username: usernameToUse }).eq('id', savedId);
         const { data: player } = await supabase.from('players').select('*').eq('id', savedId).single();
         if (player) { guestUserRef.current = player; setGuestUser(player); }
       }
     } else {
-      const { data, error } = await supabase.auth.signInWithPassword({ email: linkEmail, password: linkPassword });
+      const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password: cleanLinkPassword });
       if (error) { alert(error.message); setAuthLoading(false); return; }
       if (data.user) {
         const { data: existingPlayer } = await supabase.from('players').select('*').eq('auth_id', data.user.id).single();
@@ -1396,9 +1432,18 @@ const GameEngine = () => {
   const handleSignIn = async () => {
     if (!email || !password) return alert("Preencha email e senha");
     setAuthLoading(true);
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = password.trim();
+    const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password: cleanPassword });
     if (error) {
-      alert("Erro ao logar: " + error.message);
+      // Mensagem mais amigável para o usuário
+      if (error.message === 'Invalid login credentials') {
+        alert("E-mail ou senha incorretos. Se você acabou de criar a conta, pode ser necessário confirmar o e-mail primeiro.");
+      } else if (error.message === 'Email not confirmed') {
+        alert("Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada (e spam) para o link de confirmação.");
+      } else {
+        alert("Erro ao logar: " + error.message);
+      }
       setAuthLoading(false);
       return;
     }
@@ -1414,10 +1459,55 @@ const GameEngine = () => {
         localStorage.setItem('pixelArenaPixels', player.pixels.toString());
         setShowGuestModal(false);
       } else {
-        alert("Usuário logado mas sem perfil encontrado. Tente criar conta.");
+        // Usuário autenticado mas sem perfil - cria um automaticamente
+        const finalName = cleanEmail.split('@')[0].substring(0, 15).toUpperCase();
+        const { data: newPlayer } = await supabase.from('players').insert([{
+          username: finalName,
+          pixels: 0,
+          high_score: 0,
+          auth_id: data.user.id
+        }]).select('*').single();
+        if (newPlayer) {
+          guestUserRef.current = newPlayer;
+          setGuestUser(newPlayer);
+          pixelsRef.current = newPlayer.pixels;
+          setDisplayPixels(newPlayer.pixels);
+          setShowGuestModal(false);
+        } else {
+          alert("Erro ao criar perfil. Tente novamente.");
+        }
       }
     }
     setAuthLoading(false);
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    localStorage.removeItem('olivGuestId');
+    localStorage.removeItem('pixelArenaHighScore');
+    localStorage.removeItem('pixelArenaPixels');
+    guestUserRef.current = null;
+    setGuestUser(null);
+    pixelsRef.current = 0;
+    setDisplayPixels(0);
+    setGameState(prev => ({ ...prev, highScore: 0, score: 0 }));
+    setShowProfileMenu(false);
+    setShowGuestModal(true);
+    setAuthMode('login');
+  };
+
+  const handleEditProfile = async () => {
+    if (!editProfileName.trim()) return alert("O nome não pode ser vazio");
+    if (!guestUserRef.current) return;
+
+    const { error } = await supabase.from('players').update({ username: editProfileName.trim().toUpperCase() }).eq('id', guestUserRef.current.id);
+    if (error) {
+      alert("Erro ao atualizar perfil: " + error.message);
+    } else {
+      guestUserRef.current.username = editProfileName.trim().toUpperCase();
+      setGuestUser({ ...guestUserRef.current });
+      setShowEditProfileModal(false);
+    }
   };
 
   return (
@@ -1486,20 +1576,68 @@ const GameEngine = () => {
         </div>
       )}
 
+      {/* Modal Editar Perfil */}
+      {showEditProfileModal && (
+        <div className="absolute inset-0 bg-black/95 z-[9999] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-gray-900 border border-gray-700 p-8 rounded-xl shadow-[0_0_50px_rgba(59,130,246,0.3)] w-full max-w-sm flex flex-col items-center animate-fade-in">
+            <h2 className="text-xl font-bold text-white mb-4">Editar Perfil</h2>
+            <div className="w-full flex flex-col gap-2 mb-6">
+              <label className="text-gray-400 text-xs font-bold uppercase">Novo Nome</label>
+              <input
+                type="text" maxLength={15} value={editProfileName} onChange={(e) => setEditProfileName(e.target.value.toUpperCase())}
+                className="w-full bg-gray-950 text-white p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none font-bold"
+                placeholder="SEU_NOME"
+              />
+            </div>
+            <div className="flex gap-3 w-full">
+              <button onClick={() => setShowEditProfileModal(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all active:scale-95">
+                Cancelar
+              </button>
+              <button onClick={handleEditProfile} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all active:scale-95">
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Nome do Jogador + Botão de Vinculação (fora da barra de abas) */}
       {guestUser && (
-        <div className="flex justify-end items-center w-full px-3 pb-1 shrink-0 gap-2">
+        <div className="flex justify-end items-center w-full px-3 pb-1 shrink-0 gap-2 relative">
           <span className="text-[10px] md:text-xs text-gray-400 hidden sm:inline">
             {(guestUser as any).auth_id ? 'Conta:' : 'Convidado:'}
           </span>
-          <span className="text-[10px] md:text-sm text-blue-400 font-bold truncate max-w-[120px]">{guestUser.username}</span>
-          {!(guestUser as any).auth_id && (
-            <button
-              onClick={() => { setLinkEmail(''); setLinkPassword(''); setLinkUsername(''); setShowLinkModal(true); }}
-              className="text-[9px] md:text-xs bg-purple-700 hover:bg-purple-600 text-white px-2 py-0.5 rounded-full font-bold transition-colors shrink-0"
-            >
-              Vincular Conta
-            </button>
+          <button
+            onClick={() => setShowProfileMenu(!showProfileMenu)}
+            className="text-[10px] md:text-sm text-blue-400 font-bold truncate max-w-[120px] hover:text-blue-300 transition-colors flex items-center gap-1"
+          >
+            {guestUser.username} <span className="text-[8px] md:text-[10px]">▼</span>
+          </button>
+
+          {showProfileMenu && (
+            <div className="absolute top-full right-3 mt-1 bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden z-50 flex flex-col w-36 animate-fade-in">
+              {!(guestUser as any).auth_id ? (
+                <button
+                  onClick={() => { setShowProfileMenu(false); setLinkEmail(''); setLinkPassword(''); setLinkUsername(''); setShowLinkModal(true); }}
+                  className="w-full text-left px-4 py-3 text-xs font-bold text-white hover:bg-purple-600 transition-colors border-b border-gray-800"
+                >
+                  Vincular Conta
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setShowProfileMenu(false); setEditProfileName(guestUser.username); setShowEditProfileModal(true); }}
+                  className="w-full text-left px-4 py-3 text-xs font-bold text-white hover:bg-blue-600 transition-colors border-b border-gray-800"
+                >
+                  Editar Perfil
+                </button>
+              )}
+              <button
+                onClick={handleLogout}
+                className="w-full text-left px-4 py-3 text-xs font-bold text-red-400 hover:bg-red-600 hover:text-white transition-colors"
+              >
+                Sair
+              </button>
+            </div>
           )}
         </div>
       )}
