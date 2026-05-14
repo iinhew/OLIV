@@ -88,8 +88,11 @@ const GameEngine = () => {
     setRankingData([]);
 
     if (mode === 'babylon') {
-      const localScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
-      setRankingData(localScore > 0 ? [{ username: guestUser?.username || 'VOCÊ', high_score: localScore }] : []);
+      const { data, error } = await supabase.from('players').select('username, babylon_high_score').order('babylon_high_score', { ascending: false, nullsFirst: false }).limit(50);
+      if (data) {
+        const mapped = data.map((p: any) => ({ username: p.username, high_score: p.babylon_high_score || 0 }));
+        setRankingData(mapped);
+      }
       setLoadingRanking(false);
       return;
     }
@@ -675,6 +678,9 @@ const GameEngine = () => {
         currentHighScore = Math.floor(score);
         if (babylonModeRef.current) {
           localStorage.setItem(GAME_CONSTANTS.BABYLON_LS_KEY, currentHighScore.toString());
+          if (guestUserRef.current) {
+            supabase.from('players').update({ babylon_high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+          }
         } else {
           localStorage.setItem('pixelArenaHighScore', currentHighScore.toString());
           if (guestUserRef.current) {
@@ -773,6 +779,10 @@ const GameEngine = () => {
     const render = (timestamp?: number) => {
       if (babylonRestartRef.current) {
         babylonRestartRef.current = false;
+        if (babylonModeRef.current) {
+          currentHighScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
+          setGameState(prev => ({ ...prev, highScore: currentHighScore }));
+        }
         if (hasStarted && !isGameOver) {
           obstacles = [];
           activeParallaxAds = [];
@@ -2394,9 +2404,7 @@ const GameEngine = () => {
       <div className={`flex-1 w-full flex flex-col items-center relative ${view === 'game' ? 'flex' : 'hidden'}`}>
         <div className="mb-2 text-white text-sm md:text-xl font-bold flex justify-between items-center w-full px-4 md:px-8 shrink-0">
           <span className="text-blue-400 text-xs md:text-lg flex items-center gap-2">
-            {babylonMode ? '⚡' : ''} High Score: {babylonMode
-              ? parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0')
-              : gameState.highScore}
+            {babylonMode ? '⚡' : ''} High Score: {gameState.highScore}
           </span>
           <div className="flex gap-2 md:gap-3 items-center">
 
@@ -2405,7 +2413,11 @@ const GameEngine = () => {
                 const next = !babylonModeRef.current;
                 babylonModeRef.current = next;
                 setBabylonMode(next);
-                if (next) babylonRestartRef.current = true;
+                if (next) {
+                  babylonRestartRef.current = true;
+                  const babylonScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
+                  setGameState(prev => ({ ...prev, highScore: babylonScore }));
+                }
                 const musicKey = neoModeRef.current ? 'bgm_matrix' : next ? 'bgm_hardmode' : 'bgm';
                 gameAudio.playMusic(musicKey);
               }}
