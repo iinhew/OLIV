@@ -181,6 +181,7 @@ const GameEngine = () => {
   const coinImageRef = useRef<HTMLImageElement | null>(null);
   const magnetImageRef = useRef<HTMLImageElement | null>(null);
   const redCoinImageRef = useRef<HTMLImageElement | null>(null);
+  const muralBgCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // --- Konami Code listener (ativo na vista do canvas) ---
   useEffect(() => {
@@ -203,6 +204,205 @@ const GameEngine = () => {
     return () => window.removeEventListener('keydown', handleKonami);
   }, [view]);
   // -------------------------------------------------------
+
+  // --- Fundo animado "Tubo Digital" para o Mural ---
+  useEffect(() => {
+    const canvas = muralBgCanvasRef.current;
+    if (!canvas || view !== 'canvas') return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const gridCache = new Map<number, HTMLCanvasElement>();
+    const floatOffsets: Record<number, { gridX: number, gridY: number }> = {};
+
+    let animFrameId = 0;
+
+    const renderGridToCache = (brand: CustomBrand) => {
+      const key = brand.id;
+      if (gridCache.has(key)) return gridCache.get(key)!;
+
+      const data = brand.pixel_data || brand.pixelData || [];
+      let rows = 8;
+      let cols = data.length / 8;
+      let pixels = data;
+      if (data[0] && data[0].startsWith('META:')) {
+        const parts = data[0].split(':');
+        cols = parseInt(parts[1]);
+        rows = parseInt(parts[2]);
+        pixels = data.slice(1);
+      }
+
+      const cellSize = 4;
+      const c = document.createElement('canvas');
+      c.width = Math.max(cols * cellSize, 1);
+      c.height = Math.max(rows * cellSize, 1);
+      const cx = c.getContext('2d')!;
+      cx.imageSmoothingEnabled = false;
+
+      if (brand.color !== 'transparent') {
+        cx.fillStyle = brand.color;
+        cx.fillRect(0, 0, c.width, c.height);
+      }
+
+      for (let r = 0; r < rows; r++) {
+        for (let ci = 0; ci < cols; ci++) {
+          const idx = r * cols + ci;
+          if (pixels[idx]) {
+            cx.fillStyle = pixels[idx];
+            cx.fillRect(ci * cellSize, r * cellSize, cellSize, cellSize);
+          }
+        }
+      }
+
+      gridCache.set(key, c);
+      return c;
+    };
+
+    const draw = () => {
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      if (w === 0 || h === 0) { animFrameId = requestAnimationFrame(draw); return; }
+
+      const cx = w / 2;
+      const cy = h / 2;
+      const maxR = Math.sqrt(cx * cx + cy * cy);
+      const fisheyePower = 0.7;
+      const gridSpacing = 48;
+      const now = Date.now();
+      const angle = now * 0.00005;
+
+      // Camada 1+2: Malha com distorção Fisheye
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.strokeStyle = 'rgba(60, 120, 255, 0.10)';
+      ctx.lineWidth = 1;
+
+      const drawGridLine = (points: { x: number, y: number }[]) => {
+        ctx.beginPath();
+        for (let i = 0; i < points.length; i++) {
+          const p = points[i];
+          if (i === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+      };
+
+      const transform = (x: number, y: number) => {
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+        const rx = x * cosA - y * sinA;
+        const ry = x * sinA + y * cosA;
+        const dx = rx - cx;
+        const dy = ry - cy;
+        const r = Math.sqrt(dx * dx + dy * dy);
+        if (r < 0.5) return { x: cx, y: cy };
+        const rNorm = Math.min(r / maxR, 1);
+        const rDistorted = Math.pow(rNorm, fisheyePower) * maxR;
+        const scale = rDistorted / r;
+        return { x: cx + dx * scale, y: cy + dy * scale };
+      };
+
+      const steps = 60;
+
+      for (let gx = -w; gx < w * 2; gx += gridSpacing) {
+        const pts: { x: number, y: number }[] = [];
+        for (let j = 0; j <= steps; j++) {
+          const gy = -h + (j / steps) * (h * 3);
+          pts.push(transform(gx, gy));
+        }
+        drawGridLine(pts);
+      }
+
+      for (let gy = -h; gy < h * 2; gy += gridSpacing) {
+        const pts: { x: number, y: number }[] = [];
+        for (let j = 0; j <= steps; j++) {
+          const gx = -w + (j / steps) * (w * 3);
+          pts.push(transform(gx, gy));
+        }
+        drawGridLine(pts);
+      }
+
+      ctx.strokeStyle = 'rgba(60, 120, 255, 0.20)';
+      ctx.lineWidth = 1.5;
+      const hPts: { x: number, y: number }[] = [];
+      const vPts: { x: number, y: number }[] = [];
+      for (let j = 0; j <= steps; j++) {
+        const t = j / steps;
+        hPts.push(transform(-w + t * w * 3, 0));
+        vPts.push(transform(0, -h + t * h * 3));
+      }
+      drawGridLine(hPts);
+      drawGridLine(vPts);
+
+      // Obras de arte na grade (giram e distorcem com o fundo)
+      const brands = purchasedBrandsRef.current;
+      if (brands && brands.length > 0) {
+        const gridCols = Math.max(1, Math.ceil(w / gridSpacing));
+        const gridRows = Math.max(1, Math.ceil(h / gridSpacing));
+        for (const brand of brands) {
+          const id = brand.id;
+          if (!floatOffsets[id]) {
+            const hash1 = ((id * 2654435761) & 0x7fffffff) / 0x7fffffff;
+            const hash2 = ((id * 2246822519) & 0x7fffffff) / 0x7fffffff;
+            floatOffsets[id] = {
+              gridX: (hash1 - 0.5) * gridCols * 1.5,
+              gridY: (hash2 - 0.5) * gridRows * 1.5
+            };
+          }
+
+          const off = floatOffsets[id];
+          const orbitX = Math.sin(now * 0.00008 + id * 1.3) * 0.4;
+          const orbitY = Math.cos(now * 0.00006 + id * 0.7) * 0.4;
+          const gx = (off.gridX + orbitX) * gridSpacing;
+          const gy = (off.gridY + orbitY) * gridSpacing;
+          const pt = transform(gx, gy);
+
+          if (pt.x < -150 || pt.x > w + 150 || pt.y < -150 || pt.y > h + 150) continue;
+
+          const isParallax = brand.pixel_data && brand.pixel_data.length === 1;
+
+          ctx.save();
+          ctx.globalAlpha = 0.35;
+          ctx.imageSmoothingEnabled = false;
+
+          if (isParallax) {
+            const img = parallaxImagesRef.current[id];
+            if (img && img.complete) {
+              const aspect = img.width / img.height;
+              const dw = 80;
+              const dh = dw / aspect;
+              ctx.drawImage(img, pt.x - dw / 2, pt.y - dh / 2, dw, dh);
+            }
+          } else {
+            const cached = renderGridToCache(brand);
+            const s = 1.5;
+            ctx.drawImage(cached, pt.x - cached.width * s / 2, pt.y - cached.height * s / 2, cached.width * s, cached.height * s);
+          }
+
+          ctx.restore();
+        }
+      }
+
+      // Camada 4: Vinheta
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(0.5, 'rgba(0,0,0,0)');
+      grad.addColorStop(0.8, 'rgba(0,0,0,0.3)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.8)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+
+      animFrameId = requestAnimationFrame(draw);
+    };
+
+    draw();
+    return () => cancelAnimationFrame(animFrameId);
+  }, [view]);
 
   useEffect(() => {
     const initializeSession = async () => {
@@ -1994,7 +2194,16 @@ const GameEngine = () => {
       )}
 
       {view === 'canvas' && (
-        <div className="w-full flex-1 flex flex-col items-center animate-fade-in px-4 pb-10 overflow-y-auto">
+        <div className="w-full flex-1 flex flex-col items-center animate-fade-in px-4 pb-10 overflow-y-auto relative">
+          <canvas
+            ref={muralBgCanvasRef}
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{ imageRendering: 'pixelated' }}
+          />
+          <div className="absolute inset-0 pointer-events-none" style={{
+            backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.15) 2px, rgba(0,0,0,0.15) 4px)',
+            backgroundSize: '100% 4px'
+          }} />
           <h2 className="text-xl md:text-2xl text-white font-bold mb-2">Canvas de Territórios</h2>
           <div className="flex justify-between w-full max-w-[600px] mb-4 bg-gray-900 p-4 rounded-lg border border-gray-700">
             <div>
