@@ -56,6 +56,12 @@ const GameEngine = () => {
   const [vazioTapCount, setVazioTapCount] = useState(0);
   const [dpadUnlocked, setDpadUnlocked] = useState(false);
   const vazioTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // --- NOVO: Modo Babilônico ---
+  const [babylonMode, setBabylonMode] = useState(false);
+  const babylonModeRef = useRef(false);
+  const babylonRestartRef = useRef(false);
+  // -----------------------------
   // ----------------------------------------
 
   // --- NOVO: Loja de Skins ---
@@ -73,11 +79,29 @@ const GameEngine = () => {
   const skinImagesRef = useRef<Record<string, HTMLImageElement>>({});
   // ---------------------------
 
-  const handleOpenRanking = async () => {
+  const [rankingMode, setRankingMode] = useState<'normal' | 'babylon'>('normal');
+
+  const handleOpenRanking = async (mode: 'normal' | 'babylon' = 'normal') => {
     setShowRankingModal(true);
+    setRankingMode(mode);
     setLoadingRanking(true);
-    const { data, error } = await supabase.from('players').select('username, high_score').order('high_score', { ascending: false }).limit(50);
-    if (data) setRankingData(data);
+    setRankingData([]);
+
+    if (mode === 'babylon') {
+      const { data, error } = await supabase.from('players').select('username, babylon_high_score').order('babylon_high_score', { ascending: false, nullsFirst: false }).limit(50);
+      if (data) {
+        const mapped = data.map((p: any) => ({ username: p.username, high_score: p.babylon_high_score || 0 }));
+        setRankingData(mapped);
+      }
+      setLoadingRanking(false);
+      return;
+    }
+
+    const { data, error } = await supabase.from('players').select('username, high_score').order('high_score', { ascending: false, nullsFirst: false }).limit(50);
+    if (data) {
+      const mapped = data.map((p: any) => ({ username: p.username, high_score: p.high_score || 0 }));
+      setRankingData(mapped);
+    }
     setLoadingRanking(false);
   };
   // -----------------------------
@@ -169,6 +193,8 @@ const GameEngine = () => {
         neoModeRef.current = next;
         setNeoMode(next);
         if (next) neoExtraLifeRef.current = 1;
+        const musicKey = next ? 'bgm_matrix' : babylonModeRef.current ? 'bgm_hardmode' : 'bgm';
+        gameAudio.playMusic(musicKey);
       }
     };
     window.addEventListener('keydown', handleKonami);
@@ -469,6 +495,8 @@ const GameEngine = () => {
 
   useEffect(() => {
     gameAudio.loadMusic('bgm', '/sounds/bgm.mp3');
+    gameAudio.loadMusic('bgm_matrix', '/sounds/bgm_matrix.mp3');
+    gameAudio.loadMusic('bgm_hardmode', '/sounds/bgm_hardmode.mp3');
     gameAudio.loadSound('jump', '/sounds/pop.wav');
     gameAudio.loadSound('jump_trampoline', '/sounds/jump.wav');
     gameAudio.loadSound('coin', '/sounds/coin.wav');
@@ -544,17 +572,27 @@ const GameEngine = () => {
     };
 
     // --- LÓGICA DE CANVAS DINÂMICO ---
+    let mobileScale = 1;
+    let worldWidth = 0;
+    let worldHeight = 0;
+
     const resizeCanvas = () => {
       if (container && canvas) {
         canvas.width = container.clientWidth;
         canvas.height = container.clientHeight;
 
+        const isMobileView = canvas.width < 768;
+        const MOBILE_BASE_WIDTH = 600;
+        mobileScale = isMobileView ? canvas.width / MOBILE_BASE_WIDTH : 1;
+        worldWidth = canvas.width / mobileScale;
+        worldHeight = canvas.height / mobileScale;
+
         // Ajuste dinâmico da posição X do jogador para Mobile vs Desktop
-        player.x = Math.min(GAME_CONSTANTS.PLAYER_START_X, canvas.width * 0.25);
+        player.x = Math.min(GAME_CONSTANTS.PLAYER_START_X, worldWidth * 0.25);
 
         // Impede que o jogador fique preso embaixo da tela ao redimensionar
-        if (player.y + player.height > canvas.height) {
-          player.y = canvas.height - player.height;
+        if (player.y + player.height > worldHeight) {
+          player.y = worldHeight - player.height;
         }
       }
     };
@@ -589,6 +627,8 @@ const GameEngine = () => {
     let lastBrandId = -1;      // Anti-duplicata: rastreia última plataforma
     let floorScroll = 0;       // Animação de Chão/Teto
 
+    let lastJumpTime = 0;
+
     // --- NEO MODE: Matrix rain drops ---
     const matrixChars = '01ABCDEFNEOMATRIX';
     let matrixDrops: { x: number, y: number, speed: number, char: string, alpha: number }[] = [];
@@ -601,10 +641,10 @@ const GameEngine = () => {
         alpha: 0.2 + Math.random() * 0.6
       }));
     };
-    initMatrixDrops(canvas.width, canvas.height);
+    initMatrixDrops(worldWidth, worldHeight);
     // ------------------------------------
 
-    let currentHighScore = parseInt(localStorage.getItem('pixelArenaHighScore') || '0');
+    let currentHighScore = parseInt(localStorage.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
     setGameState(prev => ({ ...prev, highScore: currentHighScore }));
 
 
@@ -612,8 +652,8 @@ const GameEngine = () => {
     const triggerGameOver = () => {
       // --- HACK DE INVENCIBILIDADE (via Console) ---
       if (typeof window !== 'undefined' && (window as any).isInvincible) {
-        if (player.y + player.height >= canvas.height || player.y <= 0) {
-          player.y = canvas.height / 2;
+        if (player.y + player.height >= worldHeight || player.y <= 0) {
+          player.y = worldHeight / 2;
           player.velocity = 0;
         }
         return;
@@ -624,7 +664,7 @@ const GameEngine = () => {
       if (neoModeRef.current && neoExtraLifeRef.current > 0) {
         neoExtraLifeRef.current = 0;
         // Reseta posição e limpa obstáculos, mantém o score
-        player.y = Math.min(150, canvas.height / 2);
+        player.y = Math.min(150, worldHeight / 2);
         player.velocity = 0;
         obstacles = [];
         activeParallaxAds = [];
@@ -644,14 +684,22 @@ const GameEngine = () => {
       isGameOver = true;
       shakeFrames = 15;
       hasBeatenHighScore = false;
+      activeParallaxAds = [];
+      gameAudio.stopMusic();
       gameAudio.play('death');
 
       if (Math.floor(score) > currentHighScore) {
         currentHighScore = Math.floor(score);
-        localStorage.setItem('pixelArenaHighScore', currentHighScore.toString());
-        // Sincroniza Highscore no Cloud
-        if (guestUserRef.current) {
-          supabase.from('players').update({ high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+        if (babylonModeRef.current) {
+          localStorage.setItem(GAME_CONSTANTS.BABYLON_LS_KEY, currentHighScore.toString());
+          if (guestUserRef.current) {
+            supabase.from('players').update({ babylon_high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+          }
+        } else {
+          localStorage.setItem('pixelArenaHighScore', currentHighScore.toString());
+          if (guestUserRef.current) {
+            supabase.from('players').update({ high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+          }
         }
       }
 
@@ -667,12 +715,11 @@ const GameEngine = () => {
 
       if (!hasStarted) {
         if (countdownUntil === 0) {
-          gameAudio.playMusic('bgm');
           countdownUntil = Date.now() + 3000;
           setGameState(prev => ({ ...prev, hasStarted: true }));
         }
       } else if (isGameOver) {
-        player.y = Math.min(150, canvas.height / 2);
+        player.y = Math.min(150, worldHeight / 2);
         player.velocity = 0;
         obstacles = [];
         particlePool.clear();
@@ -681,35 +728,40 @@ const GameEngine = () => {
         hasStarted = false;
         score = 0;
         shakeFrames = 0;
-        gameSpeed = 3;
+        gameSpeed = babylonModeRef.current ? GAME_CONSTANTS.MAX_GAME_SPEED : 3;
         hasBeatenHighScore = false;
         countdownUntil = Date.now() + 3000;
         setGameState(prev => ({ ...prev, gameOver: false, hasStarted: true, score: 0 }));
-        // Garante que o render loop reinicie mesmo se estava parado
         window.cancelAnimationFrame(animationFrameId);
         lastFrameTime = performance.now();
         render();
       } else {
         if (countdownUntil > Date.now()) return;
         player.velocity = player.jumpStrength;
-        gameAudio.play('jump');
-        // Trail colorido baseado na skin ativa
-        const skinDef = SKINS.find(s => s.id === activeSkinRef.current);
-        const trailColor = skinDef?.trailColor || 'rgba(120, 200, 80, ALPHA)';
-        for (let i = 0; i < 5; i++) {
-          if (trailColor === 'rainbow') {
-            const hue = (Date.now() / 5 + i * 40) % 360;
-            particlePool.spawn(
-              player.x + player.width / 2, player.y + player.height,
-              (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
-              `hsla(${hue}, 100%, 60%, ALPHA)`
-            );
-          } else {
-            particlePool.spawn(
-              player.x + player.width / 2, player.y + player.height,
-              (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
-              trailColor
-            );
+
+        const now = Date.now();
+        if (now - lastJumpTime > 80) {
+          lastJumpTime = now;
+          gameAudio.play('jump');
+
+          // Trail colorido baseado na skin ativa
+          const skinDef = SKINS.find(s => s.id === activeSkinRef.current);
+          const trailColor = skinDef?.trailColor || 'rgba(120, 200, 80, ALPHA)';
+          for (let i = 0; i < (trailColor === 'rainbow' ? 3 : 5); i++) {
+            if (trailColor === 'rainbow') {
+              const hue = (Date.now() / 5 + i * 40) % 360;
+              particlePool.spawn(
+                player.x + player.width / 2, player.y + player.height,
+                (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
+                `hsla(${hue}, 100%, 60%, ALPHA)`
+              );
+            } else {
+              particlePool.spawn(
+                player.x + player.width / 2, player.y + player.height,
+                (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
+                trailColor
+              );
+            }
           }
         }
       }
@@ -741,12 +793,54 @@ const GameEngine = () => {
     const externalPauseListener = () => handleTogglePause();
     window.addEventListener('toggleExternalPause', externalPauseListener);
 
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        if (isGameOver) {
+          hasStarted = false;
+          isGameOver = false;
+          countdownUntil = 0;
+          obstacles = [];
+          particlePool.clear();
+          score = 0;
+          gameSpeed = babylonModeRef.current ? GAME_CONSTANTS.MAX_GAME_SPEED : 3;
+          hasBeatenHighScore = false;
+          babylonRestartRef.current = true;
+          gameAudio.stopMusic();
+          setGameState(prev => ({ ...prev, gameOver: false, hasStarted: false, score: 0 }));
+        } else if (hasStarted && !isPaused) {
+          handleTogglePause();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handleVisibilityChange);
+
 
 
     const render = (timestamp?: number) => {
-      const FLOOR_HEIGHT = 40;
-      const CEILING_HEIGHT = 20;
-
+      if (babylonRestartRef.current) {
+        babylonRestartRef.current = false;
+        if (babylonModeRef.current) {
+          currentHighScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
+          setGameState(prev => ({ ...prev, highScore: currentHighScore }));
+        }
+        if (hasStarted && !isGameOver) {
+          obstacles = [];
+          activeParallaxAds = [];
+          particlePool.clear();
+          player.y = Math.min(150, worldHeight / 2);
+          player.velocity = 0;
+          score = 0;
+          shakeFrames = 0;
+          gameSpeed = GAME_CONSTANTS.MAX_GAME_SPEED;
+          hasBeatenHighScore = false;
+          isGameOver = false;
+          hasStarted = false;
+          countdownUntil = Date.now() + 3000;
+          gameAudio.stopMusic();
+          setGameState(prev => ({ ...prev, hasStarted: false, gameOver: false, score: 0 }));
+        }
+      }
       if (isGameOver && shakeFrames <= 0) return;
       if (isPaused || view === 'canvas' || view === 'brecho') {
         lastFrameTime = timestamp || performance.now();
@@ -771,6 +865,8 @@ const GameEngine = () => {
         if (!hasStarted) {
           hasStarted = true;
           setGameState(prev => ({ ...prev, hasStarted: true }));
+          const musicKey = neoModeRef.current ? 'bgm_matrix' : babylonModeRef.current ? 'bgm_hardmode' : 'bgm';
+          gameAudio.playMusic(musicKey);
           player.velocity = player.jumpStrength;
           gameAudio.play('jump');
         }
@@ -778,35 +874,42 @@ const GameEngine = () => {
 
       const isPhysicsActive = hasStarted && !isGameOver && !isCountingDown;
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.save();
 
+      if (mobileScale < 1) {
+        ctx.scale(mobileScale, mobileScale);
+      }
+
       if (shakeFrames > 0) {
-        ctx.translate(Math.random() * 10 - 5, Math.random() * 10 - 5);
+        const shakeX = (Math.random() - 0.5) * (mobileScale < 1 ? 4 : 10);
+        const shakeY = (Math.random() - 0.5) * (mobileScale < 1 ? 4 : 10);
+        ctx.translate(shakeX, shakeY);
         shakeFrames -= dt;
       }
+
+      ctx.clearRect(0, 0, worldWidth, worldHeight);
 
       // 1. Fundo: modo Matrix (Neo) ou estrelas normais
       if (neoModeRef.current) {
         // Fundo verde escuro sólido
         ctx.fillStyle = '#020d02';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, worldWidth, worldHeight);
         // Camada de brilho sutil
         ctx.fillStyle = 'rgba(0, 40, 10, 0.6)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, worldWidth, worldHeight);
 
         ctx.font = 'bold 14px monospace';
         matrixDrops.forEach(drop => {
           if (isPhysicsActive || isGameOver) {
             drop.y += drop.speed * 0.5 * dt;
             drop.x -= (isPhysicsActive ? gameSpeed : 3) * 0.4 * dt;
-            if (drop.y > canvas.height) {
+            if (drop.y > worldHeight) {
               drop.y = -14;
               drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
             }
             if (drop.x < -14) {
-              drop.x = canvas.width + Math.random() * 100;
-              drop.y = Math.random() * canvas.height;
+              drop.x = worldWidth + Math.random() * 100;
+              drop.y = Math.random() * worldHeight;
               drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
             }
           }
@@ -817,7 +920,7 @@ const GameEngine = () => {
         parallaxLayers.forEach(layer => {
           layer.stars.forEach(star => {
             if (isPhysicsActive) star.x -= gameSpeed * layer.speed * dt;
-            if (star.x < 0) { star.x = canvas.width; star.y = Math.random() * canvas.height; }
+            if (star.x < 0) { star.x = worldWidth; star.y = Math.random() * worldHeight; }
             ctx.fillStyle = layer.color;
             ctx.fillRect(star.x, star.y, star.size, star.size);
           });
@@ -872,7 +975,15 @@ const GameEngine = () => {
         }
         player.y += player.velocity;
         score += 0.05 * dt;
-        gameSpeed = 3 + (score / 150);
+        if (babylonModeRef.current) {
+          gameSpeed = GAME_CONSTANTS.MAX_GAME_SPEED;
+        } else {
+          gameSpeed = 3 + (score / 150);
+        }
+
+        if (babylonModeRef.current && shakeFrames <= 0 && Math.random() < GAME_CONSTANTS.BABYLON_RANDOM_SHAKE_CHANCE * dt) {
+          shakeFrames = 5 + Math.floor(Math.random() * 10);
+        }
 
         if (player.rocketTimer > 0) {
           player.rocketTimer -= dt;
@@ -936,17 +1047,17 @@ const GameEngine = () => {
             const drawHeight = (img.height || 200) * sizeMulti;
 
             // Se for a primeira arte na tela, nasce colada na borda para não ter delay
-            let startX = canvas.width + 100 + (Math.random() * 400);
+            let startX = worldWidth + 100 + (Math.random() * 400);
             if (activeParallaxAds.length === 0) {
-              startX = canvas.width;
+              startX = worldWidth;
             }
 
             activeParallaxAds.push({
               x: startX,
-              y: Math.random() * (canvas.height - drawHeight),
+              y: Math.random() * (worldHeight - drawHeight),
               width: drawWidth,
               height: drawHeight,
-              speed: gameSpeed * (sizeMulti * 0.3), // Menor = mais lento (profundidade)
+              speed: Math.max(1, gameSpeed) * (sizeMulti * 0.6), // Velocidade mínima para evitar acúmulo
               alpha: 0.15 + (sizeMulti * 0.4), // Mais suave para não poluir
               img: img
             });
@@ -955,17 +1066,24 @@ const GameEngine = () => {
         // ------------------------------------------------------------------------
       }
 
-      // Espaço reservado, lógica das artes movida para cima
-      // 4. Limites de Teto e Chão
-      if (hasStarted) {
-        if (player.y <= CEILING_HEIGHT) {
-          player.y = CEILING_HEIGHT;
-          if (player.velocity < 0) player.velocity = 0;
+      // 3. Renderiza as Artes Livres (Parallax) ATRÁS dos obstáculos
+      for (let i = activeParallaxAds.length - 1; i >= 0; i--) {
+        let ad = activeParallaxAds[i];
+        ad.x -= ad.speed * dt;
+
+        if (ad.img && ad.img.complete) {
+          ctx.globalAlpha = Math.min(ad.alpha, 1);
+          ctx.drawImage(ad.img, ad.x, ad.y, ad.width, ad.height);
+          ctx.globalAlpha = 1.0; // Restaura a opacidade para o resto do jogo
         }
-        if (player.y + player.height >= canvas.height - FLOOR_HEIGHT) {
-          player.y = canvas.height - FLOOR_HEIGHT - player.height;
-          if (player.velocity > 0) player.velocity = 0;
+        if (ad.x + ad.width < -200 || ad.x > worldWidth + 500 || ad.y + ad.height < -200 || ad.y > worldHeight + 200) {
+          activeParallaxAds.splice(i, 1);
         }
+      }
+
+      // 4. Verificação de Morte por queda/teto
+      if ((player.y + player.height >= worldHeight || player.y <= 0) && hasStarted) {
+        if (!isGameOver) triggerGameOver();
       }
 
       // 5. Renderização da Azeitona (Jogador)
@@ -1052,7 +1170,7 @@ const GameEngine = () => {
       for (let i = obstacles.length - 1; i >= 0; i--) {
         let obs = obstacles[i];
         if (isPhysicsActive) {
-          if (!obs.isBrand && !obs.isTrampoline && !obs.isLava && !obs.isCone && !obs.isAdSign && Date.now() < magnetActiveUntil) {
+          if (!obs.isBrand && !obs.isTrampoline && !obs.isMagnet && Date.now() < magnetActiveUntil) {
             const dx = (player.x + player.width / 2) - (obs.x + obs.width / 2);
             const dy = (renderY + player.height / 2) - (obs.y + obs.height / 2);
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1065,6 +1183,29 @@ const GameEngine = () => {
           } else {
             obs.x -= gameSpeed * dt;
           }
+
+          // Movimento babilônico de plataformas
+          if (babylonModeRef.current && obs.isBrand && obs.moveAmplitude > 0) {
+            if (obs.moveType === 'lateral') {
+              obs.x += Math.sin(Date.now() * 0.002 + obs.movePhase) * obs.moveAmplitude * 0.5;
+            } else if (obs.moveType === 'vertical' && obs.origY !== undefined) {
+              const elapsed = (Date.now() - obs.movePhase) / 1000;
+              const cycle = 2.6;
+              const t = elapsed % cycle;
+              let offset = 0;
+              if (t < 1) offset = (t / 1) * obs.moveAmplitude;
+              else if (t < 1.3) offset = obs.moveAmplitude;
+              else if (t < 2.3) offset = obs.moveAmplitude * (1 - (t - 1.3) / 1);
+              obs.y = obs.origY + offset;
+            }
+          }
+        }
+
+        // Flicker babilônico: obstáculos piscam aleatoriamente (desligado no mobile)
+        let babylonFlicker = 1;
+        if (babylonModeRef.current && mobileScale >= 1) {
+          babylonFlicker = Math.random() < 0.10 ? 0.2 + Math.random() * 0.5 : 1;
+          if (babylonFlicker < 1) ctx.save();
         }
 
         // --- NOVO: Renderiza apenas plataformas físicas (exclui artes base64 de parallax) ---
@@ -1109,6 +1250,8 @@ const GameEngine = () => {
             obs.height
           );
 
+          if (babylonFlicker < 1) ctx.globalAlpha = babylonFlicker;
+
           if (cachedCanvas) {
             ctx.drawImage(cachedCanvas, obs.x, obs.y);
           } else {
@@ -1126,19 +1269,21 @@ const GameEngine = () => {
 
           if (obs.hasSpikes && obs.spikeZones) {
             const spikeBright = 0.6 + Math.sin(Date.now() / 150) * 0.4;
+            ctx.fillStyle = `rgba(255, ${Math.floor(60 * spikeBright)}, ${Math.floor(30 * spikeBright)}, ${spikeBright})`;
             for (const zone of obs.spikeZones) {
+              ctx.beginPath();
               for (let sx = obs.x + zone.start; sx < obs.x + zone.end; sx += 4) {
-                ctx.beginPath();
                 ctx.moveTo(sx, obs.y);
                 ctx.lineTo(sx + 2, obs.y - GAME_CONSTANTS.SPIKE_HEIGHT);
                 ctx.lineTo(sx + 4, obs.y);
-                ctx.closePath();
-                ctx.fillStyle = `rgba(255, ${Math.floor(60 * spikeBright)}, ${Math.floor(30 * spikeBright)}, ${spikeBright})`;
-                ctx.fill();
               }
+              ctx.fill();
             }
           }
+          if (babylonFlicker < 1) ctx.restore();
         } else {
+          if (babylonFlicker < 1) ctx.save();
+          if (babylonFlicker < 1) ctx.globalAlpha = babylonFlicker;
           // Apenas renderiza itens que não são baseados em grade
           if (!obs.isBrand) {
             if (obs.isLava || obs.isCone || obs.isAdSign) {
@@ -1264,6 +1409,7 @@ const GameEngine = () => {
             }
             }
           }
+          if (babylonFlicker < 1) ctx.restore();
         }
 
         if (obs.isBrand) {
@@ -1295,7 +1441,7 @@ const GameEngine = () => {
               if (obs.hasSpikes && obs.spikeZones) {
                 const playerCenterX = player.x + player.width / 2;
                 const landedOnSpike = obs.spikeZones.some(
-                  (zone: {start: number, end: number}) => playerCenterX > obs.x + zone.start && playerCenterX < obs.x + zone.end
+                  (zone: { start: number, end: number }) => playerCenterX > obs.x + zone.start && playerCenterX < obs.x + zone.end
                 );
                 if (landedOnSpike) {
                   triggerGameOver();
@@ -1320,7 +1466,7 @@ const GameEngine = () => {
                 // --- NEO EXTRA LIFE: reseta posição, mantém score ---
                 if (neoModeRef.current && neoExtraLifeRef.current > 0) {
                   neoExtraLifeRef.current = 0;
-                  player.y = Math.min(150, canvas.height / 2);
+                  player.y = Math.min(150, worldHeight / 2);
                   player.velocity = 0;
                   obstacles = [];
                   activeParallaxAds = [];
@@ -1407,21 +1553,8 @@ const GameEngine = () => {
       }
 
       // 8. Geração de novos obstáculos dinâmicos
-      if (isPhysicsActive && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < canvas.width - 250)) {
-        const hazardRand = Math.random();
-        let generatedHazard = true;
-        if (hazardRand < 0.10) {
-          obstacles.push({ x: canvas.width + 100, y: canvas.height - FLOOR_HEIGHT - 5, width: 80 + Math.random() * 80, height: 20, color: 'transparent', isBrand: false, name: 'LAVA', isLava: true });
-        } else if (hazardRand < 0.20) {
-          obstacles.push({ x: canvas.width + 100, y: canvas.height - FLOOR_HEIGHT - 30, width: 30, height: 30, color: 'transparent', isBrand: false, name: 'CONE', isCone: true });
-        } else if (hazardRand < 0.30) {
-          obstacles.push({ x: canvas.width + 100, y: CEILING_HEIGHT, width: 60, height: 50, color: 'transparent', isBrand: false, name: 'AD_SIGN', isAdSign: true });
-        } else {
-          generatedHazard = false;
-        }
-
-        if (!generatedHazard) {
-          const isBrand = Math.random() > 0.45; // 55% chance de plataforma (antes era 40%)
+      if (isPhysicsActive && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < worldWidth - 250)) {
+        const isBrand = Math.random() > 0.45; // 55% chance de plataforma (antes era 40%)
 
         // Filtra só as marcas que SÃO plataformas físicas (array de pixels com mais de 1 elemento)
         const obstacleBrands = purchasedBrandsRef.current.filter(b => b.pixel_data && b.pixel_data.length > 1);
@@ -1457,23 +1590,24 @@ const GameEngine = () => {
         const brandHeight = brand ? rows * 5 : 40;
         const brandWidth = brand ? (brandHeight / rows) * cols : 20;
 
-        const hasSpikes = !!brand && !isBreakable && !isBouncy && Math.random() < GAME_CONSTANTS.SPIKE_TRAP_CHANCE;
-        let spikeZones: {start: number, end: number}[] = [];
+        const spikeChance = babylonModeRef.current ? GAME_CONSTANTS.BABYLON_SPIKE_TRAP_CHANCE : GAME_CONSTANTS.SPIKE_TRAP_CHANCE;
+        const hasSpikes = !!brand && !isBreakable && !isBouncy && Math.random() < spikeChance;
+        let spikeZones: { start: number, end: number }[] = [];
         if (hasSpikes) {
           const numZones = Math.random() < 0.5 ? 1 : 2;
           for (let z = 0; z < numZones; z++) {
             const zoneWidth = (0.3 + Math.random() * 0.2) * brandWidth;
             const zoneStart = Math.random() * (brandWidth - zoneWidth);
-            spikeZones.push({start: zoneStart, end: zoneStart + zoneWidth});
+            spikeZones.push({ start: zoneStart, end: zoneStart + zoneWidth });
           }
         }
 
         const yPos = brand
-          ? Math.random() * (canvas.height - brandHeight - 40) + 40
-          : Math.random() * (canvas.height - 40);
+          ? Math.random() * (worldHeight - brandHeight - 40) + 40
+          : Math.random() * (worldHeight - 40);
 
         obstacles.push({
-          x: canvas.width + 100,
+          x: worldWidth + 100,
           y: yPos,
           width: brandWidth,
           height: brand ? brandHeight : 20,
@@ -1481,8 +1615,12 @@ const GameEngine = () => {
           isBrand: !!brand,
           name: brand?.name || 'MOEDA',
           pixel_data: brand?.pixel_data,
-          isMagnet: !brand && Math.random() < 0.1, // 10% chance
-          isRedCoin: !brand && Math.random() < 0.15, // 15% chance entre moedas
+          isMagnet: !brand && Math.random() < (babylonModeRef.current ? 0 : 0.1), // Sem ímãs no Babylon
+          isRedCoin: !brand && Math.random() < (babylonModeRef.current ? GAME_CONSTANTS.BABYLON_RED_COIN_CHANCE : 0.15), // 15% normal, 60% Babylon
+          origY: brand ? yPos : undefined,
+          moveType: brand && babylonModeRef.current ? (() => { const r = Math.random(); return r < 0.33 ? 'none' : r < 0.66 ? 'lateral' : 'vertical'; })() : 'none',
+          movePhase: brand ? Date.now() + Math.random() * 2000 : 0,
+          moveAmplitude: babylonModeRef.current && brand ? 10 + Math.random() * 15 : 0,
           isBaitCoin: false,
           hasSpikes: hasSpikes,
           spikeZones: hasSpikes ? spikeZones : undefined,
@@ -1494,8 +1632,8 @@ const GameEngine = () => {
         if (brand && Math.random() < GAME_CONSTANTS.BAIT_COIN_SPAWN_CHANCE) {
           const isOnCeiling = Math.random() < 0.5;
           const baitX = isOnCeiling
-            ? canvas.width + 100 + Math.random() * 100
-            : canvas.width + 80; // Encostada na lateral esquerda da plataforma (sem ficar dentro)
+            ? worldWidth + 100 + Math.random() * 100
+            : worldWidth + 80; // Encostada na lateral esquerda da plataforma (sem ficar dentro)
           const baitY = isOnCeiling
             ? 5 // Quase no teto (zona mortal)
             : yPos + brandHeight / 2; // Meio da altura da plataforma
@@ -1523,12 +1661,12 @@ const GameEngine = () => {
 
       if (isCountingDown) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, worldWidth, worldHeight);
         ctx.fillStyle = 'white';
         ctx.font = 'bold 80px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(countdownSecs.toString(), canvas.width / 2, canvas.height / 2);
+        ctx.fillText(countdownSecs.toString(), worldWidth / 2, worldHeight / 2);
       }
 
       ctx.restore();
@@ -1890,7 +2028,7 @@ const GameEngine = () => {
 
       <div className="flex gap-2 md:gap-4 mb-2 md:mb-4 border-b border-gray-800 w-full px-2 md:px-4 pb-2 justify-center shrink-0">
         <button
-          onClick={() => { setView('canvas'); setDisplayPixels(pixelsRef.current); }}
+          onClick={() => { gameAudio.stopMusic(); setView('canvas'); setDisplayPixels(pixelsRef.current); }}
           className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'canvas' ? 'bg-gray-800 text-white border-b-2 border-blue-500' : 'text-gray-500 hover:text-white'}`}
         >
           Mural
@@ -1902,7 +2040,7 @@ const GameEngine = () => {
           Jogo
         </button>
         <button
-          onClick={() => { setView('brecho'); setDisplayPixels(pixelsRef.current); }}
+          onClick={() => { gameAudio.stopMusic(); setView('brecho'); setDisplayPixels(pixelsRef.current); }}
           className={`px-3 md:px-4 py-2 text-xs md:text-sm font-bold rounded-t-lg transition-colors ${view === 'brecho' ? 'bg-gray-800 text-white border-b-2 border-yellow-500' : 'text-gray-500 hover:text-white'}`}
         >
           Brechó
@@ -2063,9 +2201,14 @@ const GameEngine = () => {
       {showRankingModal && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-6 w-full max-w-md max-h-[80vh] flex flex-col">
-            <h2 className="text-2xl font-bold text-center text-white mb-4 flex items-center justify-center gap-2">
-              <img src="/images/icon_trophy.png" alt="Trophy" className="w-8 h-8" /> Ranking Global (Top 50)
+            <h2 className="text-2xl font-bold text-center text-white mb-2 flex items-center justify-center gap-2">
+              <img src="/images/icon_trophy.png" alt="Trophy" className="w-8 h-8" /> Ranking Global
             </h2>
+
+            <div className="flex bg-gray-950 p-1 rounded-md border border-gray-700 mb-3">
+              <button onClick={() => handleOpenRanking('normal')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${rankingMode === 'normal' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}>Normal</button>
+              <button onClick={() => handleOpenRanking('babylon')} className={`flex-1 py-1.5 text-xs font-bold rounded transition-colors ${rankingMode === 'babylon' ? 'bg-red-600 text-white' : 'text-gray-500 hover:text-white'}`}>⚡ Babilônico</button>
+            </div>
 
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar" style={{ minHeight: '300px' }}>
               {loadingRanking ? (
@@ -2211,184 +2354,188 @@ const GameEngine = () => {
 
       {buyModalOpen && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl shadow-2xl w-full max-w-xl flex flex-col gap-4">
-            <h2 className="text-white text-xl font-bold text-center">Central de Criação</h2>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-xl flex flex-col max-h-[90vh]">
+            <h2 className="text-white text-xl font-bold text-center p-6 pb-3 shrink-0">Central de Criação</h2>
 
-            <div className="flex bg-gray-950 p-1 rounded-md border border-gray-700">
-              <button
-                onClick={() => setAdType('obstacle')}
-                className={`flex-1 py-2 text-sm font-bold rounded transition-colors ${adType === 'obstacle' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}
-              >
-                Plataforma Física
-              </button>
-              <button
-                onClick={() => setAdType('parallax')}
-                className={`flex-1 py-2 text-sm font-bold rounded transition-colors ${adType === 'parallax' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}
-              >
-                Arte de Fundo (Livre)
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-gray-400 text-xs">Nome da Marca</label>
-              <input
-                type="text"
-                maxLength={10}
-                value={brandInputName}
-                onChange={(e) => setBrandInputName(e.target.value)}
-                className="bg-gray-800 text-white p-2 rounded border border-gray-600 focus:border-blue-500 outline-none uppercase font-bold"
-                placeholder="EX: NIKE"
-              />
-            </div>
-
-            <div className="flex gap-4">
-              <div className="flex flex-col gap-2 w-1/2">
-                <div className="flex justify-between items-center">
-                  <label className="text-gray-400 text-xs">Cor de Fundo</label>
-                  <label className="flex items-center gap-1 cursor-pointer">
-                    <input type="checkbox" checked={isTransparentBg} onChange={(e) => setIsTransparentBg(e.target.checked)} className="accent-blue-500" />
-                    <span className="text-[10px] text-gray-400">Transp.</span>
-                  </label>
-                </div>
-                {!isTransparentBg ? (
-                  <input type="color" value={baseColor} onChange={(e) => setBaseColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
-                ) : (
-                  <div className="w-full h-10 rounded border border-gray-600 bg-[#1f2937] relative overflow-hidden">
-                    <div className="absolute inset-0 opacity-50" style={{ backgroundImage: 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' }} />
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-col gap-2 w-1/2">
-                <label className="text-gray-400 text-xs">Cor do Pincel</label>
-                <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
-              </div>
-            </div>
-
-
-
-            <div className="flex justify-between items-center bg-gray-800 p-2 rounded">
-              <div className="flex gap-2">
-                <button onClick={() => setDrawColor('#ffffff')} className="w-6 h-6 rounded-full bg-white border border-gray-500"></button>
-                <button onClick={() => setDrawColor('#000000')} className="w-6 h-6 rounded-full bg-black border border-gray-500"></button>
-                <button onClick={() => setDrawColor('#ef4444')} className="w-6 h-6 rounded-full bg-red-500 border border-gray-500"></button>
-                <button onClick={() => setDrawColor('#f59e0b')} className="w-6 h-6 rounded-full bg-yellow-500 border border-gray-500"></button>
-              </div>
-
-              <div className="flex gap-2 items-center">
-                <label className="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-white font-bold cursor-pointer transition-colors shadow-lg shadow-blue-500/30">
-                  📁 Upload Imagem
-                  <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-                </label>
-                <button onClick={() => setDrawColor('')} className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-white border border-gray-500">
-                  Borracha
-                </button>
-              </div>
-            </div>
-
-            {/* --- Controles de Tamanho e Prévia --- */}
-            <div className="flex flex-col md:flex-row gap-4 bg-gray-950 p-3 rounded border border-gray-700">
-              {/* Sliders */}
-              <div className="flex flex-col gap-4 w-full md:w-1/2 justify-center">
-                <div className="flex flex-col gap-1">
-                  <div className="flex justify-between text-xs text-gray-400">
-                    <span>Largura (Pixels)</span>
-                    <span className="font-bold text-white">{adCols}px</span>
-                  </div>
-                  <input type="range" min="8" max="64" value={adCols} onChange={(e) => setAdCols(parseInt(e.target.value))} className="w-full accent-blue-500" />
+            <div className="overflow-y-auto flex-1 px-6">
+              <div className="flex flex-col gap-4">
+                <div className="flex bg-gray-950 p-1 rounded-md border border-gray-700">
+                  <button
+                    onClick={() => setAdType('obstacle')}
+                    className={`flex-1 py-2 text-sm font-bold rounded transition-colors ${adType === 'obstacle' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}
+                  >
+                    Plataforma Física
+                  </button>
+                  <button
+                    onClick={() => setAdType('parallax')}
+                    className={`flex-1 py-2 text-sm font-bold rounded transition-colors ${adType === 'parallax' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}
+                  >
+                    Arte de Fundo (Livre)
+                  </button>
                 </div>
 
-                <div className="flex flex-col gap-1">
-                  <div className="flex justify-between text-xs text-gray-400">
-                    <span>Altura (Pixels)</span>
-                    <span className="font-bold text-white">{adRows}px</span>
-                  </div>
-                  <input type="range" min="8" max={adType === 'obstacle' ? 16 : 40} value={adRows} onChange={(e) => setAdRows(parseInt(e.target.value))} className={`w-full ${adType === 'obstacle' ? 'accent-blue-500' : 'accent-purple-500'}`} />
-                </div>
-              </div>
-
-              {/* Mini Janela de Prévia */}
-              <div className="w-full md:w-1/2 flex flex-col items-center">
-                <span className="text-[10px] text-gray-500 mb-1">PRÉVIA NO CENÁRIO</span>
-                <div className="w-full max-w-[200px] aspect-[2/1] bg-slate-900 border border-gray-600 rounded relative overflow-hidden shadow-inner">
-                  <div className="absolute left-[15%] bottom-[30%] w-[4%] h-[8%] bg-white rounded-sm opacity-80" />
-                  <div
-                    className={`absolute border border-white/50 transition-all duration-200 ${adType === 'parallax' ? 'bg-purple-500/50' : 'bg-blue-500/80'}`}
-                    style={{
-                      width: adType === 'obstacle' ? `${(adCols * 5) / 8}%` : `${(adCols * 10) / 8}%`,
-                      height: adType === 'obstacle' ? `10%` : `${(adRows * 10) / 4}%`,
-                      right: '20%',
-                      top: adType === 'obstacle' ? '40%' : '20%',
-                    }}
+                <div className="flex flex-col gap-2">
+                  <label className="text-gray-400 text-xs">Nome da Marca</label>
+                  <input
+                    type="text"
+                    maxLength={10}
+                    value={brandInputName}
+                    onChange={(e) => setBrandInputName(e.target.value)}
+                    className="bg-gray-800 text-white p-2 rounded border border-gray-600 focus:border-blue-500 outline-none uppercase font-bold"
+                    placeholder="EX: NIKE"
                   />
                 </div>
+
+                <div className="flex gap-4">
+                  <div className="flex flex-col gap-2 w-1/2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-gray-400 text-xs">Cor de Fundo</label>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox" checked={isTransparentBg} onChange={(e) => setIsTransparentBg(e.target.checked)} className="accent-blue-500" />
+                        <span className="text-[10px] text-gray-400">Transp.</span>
+                      </label>
+                    </div>
+                    {!isTransparentBg ? (
+                      <input type="color" value={baseColor} onChange={(e) => setBaseColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
+                    ) : (
+                      <div className="w-full h-10 rounded border border-gray-600 bg-[#1f2937] relative overflow-hidden">
+                        <div className="absolute inset-0 opacity-50" style={{ backgroundImage: 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' }} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2 w-1/2">
+                    <label className="text-gray-400 text-xs">Cor do Pincel</label>
+                    <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
+                  </div>
+                </div>
+
+
+
+                <div className="flex justify-between items-center bg-gray-800 p-2 rounded">
+                  <div className="flex gap-2">
+                    <button onClick={() => setDrawColor('#ffffff')} className="w-6 h-6 rounded-full bg-white border border-gray-500"></button>
+                    <button onClick={() => setDrawColor('#000000')} className="w-6 h-6 rounded-full bg-black border border-gray-500"></button>
+                    <button onClick={() => setDrawColor('#ef4444')} className="w-6 h-6 rounded-full bg-red-500 border border-gray-500"></button>
+                    <button onClick={() => setDrawColor('#f59e0b')} className="w-6 h-6 rounded-full bg-yellow-500 border border-gray-500"></button>
+                  </div>
+
+                  <div className="flex gap-2 items-center">
+                    <label className="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-white font-bold cursor-pointer transition-colors shadow-lg shadow-blue-500/30">
+                      📁 Upload Imagem
+                      <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                    </label>
+                    <button onClick={() => setDrawColor('')} className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-white border border-gray-500">
+                      Borracha
+                    </button>
+                  </div>
+                </div>
+
+                {/* --- Controles de Tamanho e Prévia --- */}
+                <div className="flex flex-col md:flex-row gap-4 bg-gray-950 p-3 rounded border border-gray-700">
+                  {/* Sliders */}
+                  <div className="flex flex-col gap-4 w-full md:w-1/2 justify-center">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between text-xs text-gray-400">
+                        <span>Largura (Pixels)</span>
+                        <span className="font-bold text-white">{adCols}px</span>
+                      </div>
+                      <input type="range" min="8" max="64" value={adCols} onChange={(e) => setAdCols(parseInt(e.target.value))} className="w-full accent-blue-500" />
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between text-xs text-gray-400">
+                        <span>Altura (Pixels)</span>
+                        <span className="font-bold text-white">{adRows}px</span>
+                      </div>
+                      <input type="range" min="8" max={adType === 'obstacle' ? 16 : 40} value={adRows} onChange={(e) => setAdRows(parseInt(e.target.value))} className={`w-full ${adType === 'obstacle' ? 'accent-blue-500' : 'accent-purple-500'}`} />
+                    </div>
+                  </div>
+
+                  {/* Mini Janela de Prévia */}
+                  <div className="w-full md:w-1/2 flex flex-col items-center">
+                    <span className="text-[10px] text-gray-500 mb-1">PRÉVIA NO CENÁRIO</span>
+                    <div className="w-full max-w-[200px] aspect-[2/1] bg-slate-900 border border-gray-600 rounded relative overflow-hidden shadow-inner">
+                      <div className="absolute left-[15%] bottom-[30%] w-[4%] h-[8%] bg-white rounded-sm opacity-80" />
+                      <div
+                        className={`absolute border border-white/50 transition-all duration-200 ${adType === 'parallax' ? 'bg-purple-500/50' : 'bg-blue-500/80'}`}
+                        style={{
+                          width: adType === 'obstacle' ? `${(adCols * 5) / 8}%` : `${(adCols * 10) / 8}%`,
+                          height: adType === 'obstacle' ? `10%` : `${(adRows * 10) / 4}%`,
+                          right: '20%',
+                          top: adType === 'obstacle' ? '40%' : '20%',
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-center w-full overflow-hidden rounded bg-gray-900 my-2 border border-gray-700">
+                  {adType === 'obstacle' ? (
+                    <div
+                      className="grid cursor-crosshair touch-none shrink-0"
+                      style={{
+                        width: '100%',
+                        height: 'auto',
+                        maxHeight: '200px',
+                        maxWidth: `calc(200px * (${adCols} / ${adRows}))`,
+                        aspectRatio: `${adCols} / ${adRows}`,
+                        margin: '0 auto',
+                        backgroundColor: isTransparentBg ? '#1f2937' : baseColor,
+                        backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
+                        gridTemplateColumns: `repeat(${adCols}, minmax(0, 1fr))`,
+                        gridTemplateRows: `repeat(${adRows}, minmax(0, 1fr))`
+                      }}
+                      onMouseDown={() => setIsDrawing(true)}
+                      onMouseUp={() => setIsDrawing(false)}
+                      onMouseLeave={() => setIsDrawing(false)}
+                      onTouchStart={() => setIsDrawing(true)}
+                      onTouchEnd={() => setIsDrawing(false)}
+                    >
+                      {pixelGrid.map((color, index) => (
+                        <div
+                          key={index}
+                          className="w-full h-full border border-black/10"
+                          style={{ backgroundColor: color || 'transparent' }}
+                          onMouseDown={() => paintPixel(index)}
+                          onMouseEnter={() => isDrawing && paintPixel(index)}
+                          onTouchMove={(e) => {
+                            const touch = e.touches[0];
+                            const element = document.elementFromPoint(touch.clientX, touch.clientY);
+                            if (element && element.getAttribute('data-index')) {
+                              paintPixel(parseInt(element.getAttribute('data-index')!));
+                            }
+                          }}
+                          data-index={index}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <canvas
+                      ref={freeDrawCanvasRef}
+                      width={adCols * 10} height={adRows * 10}
+                      className="w-full max-h-[200px] cursor-crosshair touch-none object-contain shadow-inner"
+                      style={{
+                        backgroundColor: isTransparentBg ? '#1f2937' : 'black',
+                        backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
+                      }}
+                      onMouseDown={(e) => { isFreeDrawingRef.current = true; drawFreehand(e); }}
+                      onMouseMove={(e) => drawFreehand(e)}
+                      onMouseUp={() => isFreeDrawingRef.current = false}
+                      onMouseLeave={() => isFreeDrawingRef.current = false}
+                      onTouchStart={(e) => { isFreeDrawingRef.current = true; drawFreehand(e, true); }}
+                      onTouchMove={(e) => drawFreehand(e, true)}
+                      onTouchEnd={() => isFreeDrawingRef.current = false}
+                    />
+                  )}
+                </div>
+
+                <p className="text-gray-500 text-[10px] text-center mt-1">
+                  {adType === 'obstacle' ? 'Arte em pixels. Vai virar um obstáculo físico no jogo.' : 'Arte em pixels. Vai flutuar no fundo do cenário (Parallax).'}
+                </p>
               </div>
             </div>
 
-            <div className="flex justify-center w-full overflow-hidden rounded bg-gray-900 my-2 border border-gray-700">
-              {adType === 'obstacle' ? (
-                <div
-                  className="grid cursor-crosshair touch-none shrink-0"
-                  style={{
-                    width: '100%',
-                    height: 'auto',
-                    maxHeight: '200px',
-                    maxWidth: `calc(200px * (${adCols} / ${adRows}))`,
-                    aspectRatio: `${adCols} / ${adRows}`,
-                    margin: '0 auto',
-                    backgroundColor: isTransparentBg ? '#1f2937' : baseColor,
-                    backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
-                    gridTemplateColumns: `repeat(${adCols}, minmax(0, 1fr))`,
-                    gridTemplateRows: `repeat(${adRows}, minmax(0, 1fr))`
-                  }}
-                  onMouseDown={() => setIsDrawing(true)}
-                  onMouseUp={() => setIsDrawing(false)}
-                  onMouseLeave={() => setIsDrawing(false)}
-                  onTouchStart={() => setIsDrawing(true)}
-                  onTouchEnd={() => setIsDrawing(false)}
-                >
-                  {pixelGrid.map((color, index) => (
-                    <div
-                      key={index}
-                      className="w-full h-full border border-black/10"
-                      style={{ backgroundColor: color || 'transparent' }}
-                      onMouseDown={() => paintPixel(index)}
-                      onMouseEnter={() => isDrawing && paintPixel(index)}
-                      onTouchMove={(e) => {
-                        const touch = e.touches[0];
-                        const element = document.elementFromPoint(touch.clientX, touch.clientY);
-                        if (element && element.getAttribute('data-index')) {
-                          paintPixel(parseInt(element.getAttribute('data-index')!));
-                        }
-                      }}
-                      data-index={index}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <canvas
-                  ref={freeDrawCanvasRef}
-                  width={adCols * 10} height={adRows * 10}
-                  className="w-full max-h-[200px] cursor-crosshair touch-none object-contain shadow-inner"
-                  style={{
-                    backgroundColor: isTransparentBg ? '#1f2937' : 'black',
-                    backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
-                  }}
-                  onMouseDown={(e) => { isFreeDrawingRef.current = true; drawFreehand(e); }}
-                  onMouseMove={(e) => drawFreehand(e)}
-                  onMouseUp={() => isFreeDrawingRef.current = false}
-                  onMouseLeave={() => isFreeDrawingRef.current = false}
-                  onTouchStart={(e) => { isFreeDrawingRef.current = true; drawFreehand(e, true); }}
-                  onTouchMove={(e) => drawFreehand(e, true)}
-                  onTouchEnd={() => isFreeDrawingRef.current = false}
-                />
-              )}
-            </div>
-
-            <p className="text-gray-500 text-[10px] text-center mt-1">
-              {adType === 'obstacle' ? 'Arte em pixels. Vai virar um obstáculo físico no jogo.' : 'Arte em pixels. Vai flutuar no fundo do cenário (Parallax).'}
-            </p>
-
-            <div className="flex justify-between gap-4 mt-2">
+            <div className="flex justify-between gap-4 p-6 pt-3 shrink-0">
               <button onClick={() => setBuyModalOpen(false)} className="w-1/2 py-2 text-gray-300 hover:text-white border border-gray-600 rounded">Cancelar</button>
               <button onClick={handleConfirmPurchase} className={`w-1/2 py-2 text-white font-bold rounded shadow-lg ${adType === 'parallax' ? 'bg-purple-600 hover:bg-purple-500 shadow-purple-500/30' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'}`}>
                 Comprar ({adCols * adRows} Px)
@@ -2402,11 +2549,33 @@ const GameEngine = () => {
       <div className={`flex-1 w-full flex flex-col items-center relative ${view === 'game' ? 'flex' : 'hidden'}`}>
         <div className="mb-2 text-white text-sm md:text-xl font-bold flex justify-between items-center w-full px-4 md:px-8 shrink-0">
           <span className="text-blue-400 text-xs md:text-lg flex items-center gap-2">
-            High Score: {gameState.highScore}
+            {babylonMode ? '⚡' : ''} High Score: {gameState.highScore}
           </span>
-          <div className="flex gap-3 md:gap-6 items-center">
+          <div className="flex gap-2 md:gap-3 items-center">
 
-            <button onClick={handleOpenRanking} className="hover:scale-110 transition-transform" title="Ranking Global">
+            <button
+              onClick={() => {
+                const next = !babylonModeRef.current;
+                babylonModeRef.current = next;
+                setBabylonMode(next);
+                if (next) {
+                  babylonRestartRef.current = true;
+                  const babylonScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
+                  setGameState(prev => ({ ...prev, highScore: babylonScore }));
+                }
+                const musicKey = neoModeRef.current ? 'bgm_matrix' : next ? 'bgm_hardmode' : 'bgm';
+                gameAudio.playMusic(musicKey);
+              }}
+              className={`px-2 md:px-3 py-1 text-[9px] md:text-xs font-bold rounded-lg transition-all active:scale-95 border ${babylonMode
+                ? 'bg-red-700 text-white border-red-500 shadow-[0_0_10px_rgba(255,0,0,0.5)] animate-pulse'
+                : 'bg-gray-800 text-gray-400 border-gray-600 hover:bg-red-900 hover:text-red-300'
+                }`}
+              title="Ativar Modo Babilônico"
+            >
+              ⚡ BABILÔNICO
+            </button>
+
+            <button onClick={() => handleOpenRanking(babylonMode ? 'babylon' : 'normal')} className="hover:scale-110 transition-transform" title="Ranking Global">
               <img src="/images/icon_trophy.png" alt="Ranking" className="w-6 h-6 md:w-8 md:h-8 drop-shadow-md" />
             </button>
             <button onClick={handleToggleMusic} className="hover:scale-110 transition-transform" title="Música de Fundo">
@@ -2517,7 +2686,7 @@ const GameEngine = () => {
         `}</style>
 
         <div className="flex-1 w-full p-2 md:p-6 flex flex-col relative bg-black items-center justify-center">
-          <div ref={containerRef} className={`w-full h-full relative overflow-hidden bg-[#0f172a] crt-container shadow-[0_0_50px_rgba(59,130,246,0.15)] border-2 border-gray-900 ${typeof window !== 'undefined' && window.innerWidth < 768 ? 'crt-mobile-simple' : ''}`}>
+          <div ref={containerRef} className={`w-full h-full relative overflow-hidden bg-[#0f172a] crt-container shadow-[0_0_50px_rgba(59,130,246,0.15)] border-2 ${babylonMode ? 'border-red-700 shadow-[0_0_60px_rgba(255,0,0,0.3)]' : 'border-gray-900'} ${typeof window !== 'undefined' && window.innerWidth < 768 ? 'crt-mobile-simple' : ''}`}>
             <div className="crt-glitch-layer absolute inset-0">
               <canvas
                 ref={canvasRef}
@@ -2532,6 +2701,9 @@ const GameEngine = () => {
             {!gameState.hasStarted && !gameState.gameOver && (
               <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-30 pointer-events-none">
                 <h2 className="text-white text-4xl md:text-6xl font-extrabold mb-2 tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-green-400 text-center">OLIV</h2>
+                {babylonMode && (
+                  <p className="text-red-500 text-xs md:text-sm font-bold mb-1 tracking-[0.2em] animate-pulse">⚡ MODO BABILÔNICO ATIVO ⚡</p>
+                )}
                 <p className="text-gray-300 text-sm md:text-xl mb-8 text-center px-4">Navegue pelo canvas e conquiste território.</p>
                 <p className="text-white bg-blue-600 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
                   TOQUE NA TELA para começar
@@ -2560,6 +2732,9 @@ const GameEngine = () => {
                   </>
                 ) : (
                   <>
+                    {babylonMode && (
+                      <p className="text-red-500 font-bold text-xs tracking-[0.3em] mb-1 animate-pulse">⚡ MODO BABILÔNICO ⚡</p>
+                    )}
                     <h2 className="text-red-500 text-5xl md:text-7xl font-extrabold mb-4 tracking-widest">GAME OVER</h2>
                     <p className="text-gray-300 text-lg md:text-2xl mb-6">Score Final: <span className="text-green-400 font-bold">{Math.floor(gameState.score)}</span></p>
                     <p className="text-white bg-gray-800 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">

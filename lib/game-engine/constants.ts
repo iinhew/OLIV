@@ -62,4 +62,11 @@ export const GAME_CONSTANTS = {
   // --- NOVO: Armadilhas de Pouso (Spike Traps) ---
   SPIKE_TRAP_CHANCE: 0.20,          // 20% das plataformas têm espinhos
   SPIKE_HEIGHT: 6,                  // Altura visual dos espinhos em pixels
+
+  // --- NOVO: Modo Babilônico ---
+  BABYLON_RED_COIN_CHANCE: 0.60,    // 60% das moedas viram red coins no modo babilônico
+  BABYLON_SPIKE_TRAP_CHANCE: 0.60,  // 60% das plataformas têm espinhos no modo babilônico
+  BABYLON_RANDOM_SHAKE_CHANCE: 0.02, // Chance por frame de screen shake aleatório
+  BABYLON_PLATFORM_MOVE_MAX: 25,    // Amplitude máxima do movimento vertical de plataformas (pixels)
+  BABYLON_LS_KEY: 'pixelArenaHighScoreBabylon', // Chave localStorage para highscore do modo
 };
