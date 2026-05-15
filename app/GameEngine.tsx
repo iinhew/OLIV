@@ -681,6 +681,7 @@ const GameEngine = () => {
       isGameOver = true;
       shakeFrames = 15;
       hasBeatenHighScore = false;
+      activeParallaxAds = [];
       gameAudio.stopMusic();
       gameAudio.play('death');
 
@@ -783,6 +784,28 @@ const GameEngine = () => {
     canvas.addEventListener('mousedown', handleAction, { passive: false });
     const externalPauseListener = () => handleTogglePause();
     window.addEventListener('toggleExternalPause', externalPauseListener);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        if (isGameOver) {
+          hasStarted = false;
+          isGameOver = false;
+          countdownUntil = 0;
+          obstacles = [];
+          particlePool.clear();
+          score = 0;
+          gameSpeed = babylonModeRef.current ? GAME_CONSTANTS.MAX_GAME_SPEED : 3;
+          hasBeatenHighScore = false;
+          babylonRestartRef.current = true;
+          gameAudio.stopMusic();
+          setGameState(prev => ({ ...prev, gameOver: false, hasStarted: false, score: 0 }));
+        } else if (hasStarted && !isPaused) {
+          handleTogglePause();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handleVisibilityChange);
 
 
 
@@ -985,7 +1008,7 @@ const GameEngine = () => {
               y: Math.random() * (worldHeight - drawHeight),
               width: drawWidth,
               height: drawHeight,
-              speed: gameSpeed * (sizeMulti * 0.3), // Menor = mais lento (profundidade)
+              speed: Math.max(1, gameSpeed) * (sizeMulti * 0.6), // Velocidade mínima para evitar acúmulo
               alpha: 0.15 + (sizeMulti * 0.4), // Mais suave para não poluir
               img: img
             });
@@ -997,14 +1020,16 @@ const GameEngine = () => {
       // 3. Renderiza as Artes Livres (Parallax) ATRÁS dos obstáculos
       for (let i = activeParallaxAds.length - 1; i >= 0; i--) {
         let ad = activeParallaxAds[i];
-        if (isPhysicsActive) ad.x -= ad.speed * dt;
+        ad.x -= ad.speed * dt;
 
         if (ad.img && ad.img.complete) {
           ctx.globalAlpha = Math.min(ad.alpha, 1);
           ctx.drawImage(ad.img, ad.x, ad.y, ad.width, ad.height);
           ctx.globalAlpha = 1.0; // Restaura a opacidade para o resto do jogo
         }
-        if (ad.x + ad.width < -100) activeParallaxAds.splice(i, 1);
+        if (ad.x + ad.width < -200 || ad.x > worldWidth + 500 || ad.y + ad.height < -200 || ad.y > worldHeight + 200) {
+          activeParallaxAds.splice(i, 1);
+        }
       }
 
       // 4. Verificação de Morte por queda/teto
@@ -1096,7 +1121,7 @@ const GameEngine = () => {
       for (let i = obstacles.length - 1; i >= 0; i--) {
         let obs = obstacles[i];
         if (isPhysicsActive) {
-          if (!obs.isBrand && !obs.isTrampoline && Date.now() < magnetActiveUntil) {
+          if (!obs.isBrand && !obs.isTrampoline && !obs.isMagnet && Date.now() < magnetActiveUntil) {
             const dx = (player.x + player.width / 2) - (obs.x + obs.width / 2);
             const dy = (renderY + player.height / 2) - (obs.y + obs.height / 2);
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -2228,9 +2253,11 @@ const GameEngine = () => {
 
       {buyModalOpen && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl shadow-2xl w-full max-w-xl flex flex-col gap-4">
-            <h2 className="text-white text-xl font-bold text-center">Central de Criação</h2>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-xl flex flex-col max-h-[90vh]">
+            <h2 className="text-white text-xl font-bold text-center p-6 pb-3 shrink-0">Central de Criação</h2>
 
+            <div className="overflow-y-auto flex-1 px-6">
+            <div className="flex flex-col gap-4">
             <div className="flex bg-gray-950 p-1 rounded-md border border-gray-700">
               <button
                 onClick={() => setAdType('obstacle')}
@@ -2404,8 +2431,10 @@ const GameEngine = () => {
             <p className="text-gray-500 text-[10px] text-center mt-1">
               {adType === 'obstacle' ? 'Arte em pixels. Vai virar um obstáculo físico no jogo.' : 'Arte em pixels. Vai flutuar no fundo do cenário (Parallax).'}
             </p>
+            </div>
+            </div>
 
-            <div className="flex justify-between gap-4 mt-2">
+            <div className="flex justify-between gap-4 p-6 pt-3 shrink-0">
               <button onClick={() => setBuyModalOpen(false)} className="w-1/2 py-2 text-gray-300 hover:text-white border border-gray-600 rounded">Cancelar</button>
               <button onClick={handleConfirmPurchase} className={`w-1/2 py-2 text-white font-bold rounded shadow-lg ${adType === 'parallax' ? 'bg-purple-600 hover:bg-purple-500 shadow-purple-500/30' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'}`}>
                 Comprar ({adCols * adRows} Px)
