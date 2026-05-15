@@ -71,6 +71,8 @@ const GameEngine = () => {
     { id: 'pear', name: 'Pera', img: '/images/skin_pear.png', price: 300, trailColor: 'rgba(190, 220, 60, ALPHA)', owned: false, emoji: '🍐', description: 'Doce e suculenta.' },
     { id: 'orange', name: 'Laranja', img: '/images/skin_orange.png', price: 400, trailColor: 'rgba(255, 160, 40, ALPHA)', owned: false, emoji: '🍊', description: 'Vitamina C em forma de heroi.' },
     { id: 'pepper', name: 'Pimenta', img: '/images/skin_pepper.png', price: 600, trailColor: 'rgba(255, 60, 30, ALPHA)', owned: false, emoji: '🌶️', description: 'Quente demais pra morrer!' },
+    { id: 'bacon', name: 'Bacon', img: '/images/skin_bacon.png', price: 999, trailColor: 'rgba(255, 60, 30, ALPHA)', owned: false, emoji: '🥓', description: 'Bacon X Frito, a lenda viva!' },
+    { id: 'Banana', name: 'Banana', img: '/images/skin_banana.png', price: 15, trailColor: 'rgba(255, 246, 71, ALPHA)', owned: false, emoji: '🍌', description: 'Sua chance de se tornar o maior artista vivo do novo século' },
   ];
   const [showSkinShop, setShowSkinShop] = useState(false);
   const [activeSkinId, setActiveSkinId] = useState('olive');
