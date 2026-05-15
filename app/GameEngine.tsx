@@ -572,17 +572,27 @@ const GameEngine = () => {
     };
 
     // --- LÓGICA DE CANVAS DINÂMICO ---
+    let mobileScale = 1;
+    let worldWidth = 0;
+    let worldHeight = 0;
+
     const resizeCanvas = () => {
       if (container && canvas) {
         canvas.width = container.clientWidth;
         canvas.height = container.clientHeight;
 
+        const isMobileView = canvas.width < 768;
+        const MOBILE_BASE_WIDTH = 600;
+        mobileScale = isMobileView ? canvas.width / MOBILE_BASE_WIDTH : 1;
+        worldWidth = canvas.width / mobileScale;
+        worldHeight = canvas.height / mobileScale;
+
         // Ajuste dinâmico da posição X do jogador para Mobile vs Desktop
-        player.x = Math.min(GAME_CONSTANTS.PLAYER_START_X, canvas.width * 0.25);
+        player.x = Math.min(GAME_CONSTANTS.PLAYER_START_X, worldWidth * 0.25);
 
         // Impede que o jogador fique preso embaixo da tela ao redimensionar
-        if (player.y + player.height > canvas.height) {
-          player.y = canvas.height - player.height;
+        if (player.y + player.height > worldHeight) {
+          player.y = worldHeight - player.height;
         }
       }
     };
@@ -628,7 +638,7 @@ const GameEngine = () => {
         alpha: 0.2 + Math.random() * 0.6
       }));
     };
-    initMatrixDrops(canvas.width, canvas.height);
+    initMatrixDrops(worldWidth, worldHeight);
     // ------------------------------------
 
     let currentHighScore = parseInt(localStorage.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
@@ -639,8 +649,8 @@ const GameEngine = () => {
     const triggerGameOver = () => {
       // --- HACK DE INVENCIBILIDADE (via Console) ---
       if (typeof window !== 'undefined' && (window as any).isInvincible) {
-        if (player.y + player.height >= canvas.height || player.y <= 0) {
-          player.y = canvas.height / 2;
+        if (player.y + player.height >= worldHeight || player.y <= 0) {
+          player.y = worldHeight / 2;
           player.velocity = 0;
         }
         return;
@@ -651,7 +661,7 @@ const GameEngine = () => {
       if (neoModeRef.current && neoExtraLifeRef.current > 0) {
         neoExtraLifeRef.current = 0;
         // Reseta posição e limpa obstáculos, mantém o score
-        player.y = Math.min(150, canvas.height / 2);
+        player.y = Math.min(150, worldHeight / 2);
         player.velocity = 0;
         obstacles = [];
         activeParallaxAds = [];
@@ -705,7 +715,7 @@ const GameEngine = () => {
           setGameState(prev => ({ ...prev, hasStarted: true }));
         }
       } else if (isGameOver) {
-        player.y = Math.min(150, canvas.height / 2);
+        player.y = Math.min(150, worldHeight / 2);
         player.velocity = 0;
         obstacles = [];
         particlePool.clear();
@@ -787,7 +797,7 @@ const GameEngine = () => {
           obstacles = [];
           activeParallaxAds = [];
           particlePool.clear();
-          player.y = Math.min(150, canvas.height / 2);
+          player.y = Math.min(150, worldHeight / 2);
           player.velocity = 0;
           score = 0;
           shakeFrames = 0;
@@ -833,35 +843,40 @@ const GameEngine = () => {
 
       const isPhysicsActive = hasStarted && !isGameOver && !isCountingDown;
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.save();
+
+      if (mobileScale < 1) {
+        ctx.scale(mobileScale, mobileScale);
+      }
 
       if (shakeFrames > 0) {
         ctx.translate(Math.random() * 10 - 5, Math.random() * 10 - 5);
         shakeFrames -= dt;
       }
 
+      ctx.clearRect(0, 0, worldWidth, worldHeight);
+
       // 1. Fundo: modo Matrix (Neo) ou estrelas normais
       if (neoModeRef.current) {
         // Fundo verde escuro sólido
         ctx.fillStyle = '#020d02';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, worldWidth, worldHeight);
         // Camada de brilho sutil
         ctx.fillStyle = 'rgba(0, 40, 10, 0.6)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, worldWidth, worldHeight);
 
         ctx.font = 'bold 14px monospace';
         matrixDrops.forEach(drop => {
           if (isPhysicsActive || isGameOver) {
             drop.y += drop.speed * 0.5 * dt;
             drop.x -= (isPhysicsActive ? gameSpeed : 3) * 0.4 * dt;
-            if (drop.y > canvas.height) {
+            if (drop.y > worldHeight) {
               drop.y = -14;
               drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
             }
             if (drop.x < -14) {
-              drop.x = canvas.width + Math.random() * 100;
-              drop.y = Math.random() * canvas.height;
+              drop.x = worldWidth + Math.random() * 100;
+              drop.y = Math.random() * worldHeight;
               drop.char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
             }
           }
@@ -872,7 +887,7 @@ const GameEngine = () => {
         parallaxLayers.forEach(layer => {
           layer.stars.forEach(star => {
             if (isPhysicsActive) star.x -= gameSpeed * layer.speed * dt;
-            if (star.x < 0) { star.x = canvas.width; star.y = Math.random() * canvas.height; }
+            if (star.x < 0) { star.x = worldWidth; star.y = Math.random() * worldHeight; }
             ctx.fillStyle = layer.color;
             ctx.fillRect(star.x, star.y, star.size, star.size);
           });
@@ -960,14 +975,14 @@ const GameEngine = () => {
             const drawHeight = (img.height || 200) * sizeMulti;
 
             // Se for a primeira arte na tela, nasce colada na borda para não ter delay
-            let startX = canvas.width + 100 + (Math.random() * 400);
+            let startX = worldWidth + 100 + (Math.random() * 400);
             if (activeParallaxAds.length === 0) {
-              startX = canvas.width;
+              startX = worldWidth;
             }
 
             activeParallaxAds.push({
               x: startX,
-              y: Math.random() * (canvas.height - drawHeight),
+              y: Math.random() * (worldHeight - drawHeight),
               width: drawWidth,
               height: drawHeight,
               speed: gameSpeed * (sizeMulti * 0.3), // Menor = mais lento (profundidade)
@@ -993,7 +1008,7 @@ const GameEngine = () => {
       }
 
       // 4. Verificação de Morte por queda/teto
-      if ((player.y + player.height >= canvas.height || player.y <= 0) && hasStarted) {
+      if ((player.y + player.height >= worldHeight || player.y <= 0) && hasStarted) {
         if (!isGameOver) triggerGameOver();
       }
 
@@ -1326,7 +1341,7 @@ const GameEngine = () => {
                 // --- NEO EXTRA LIFE: reseta posição, mantém score ---
                 if (neoModeRef.current && neoExtraLifeRef.current > 0) {
                   neoExtraLifeRef.current = 0;
-                  player.y = Math.min(150, canvas.height / 2);
+                  player.y = Math.min(150, worldHeight / 2);
                   player.velocity = 0;
                   obstacles = [];
                   activeParallaxAds = [];
@@ -1413,7 +1428,7 @@ const GameEngine = () => {
       }
 
       // 8. Geração de novos obstáculos dinâmicos
-      if (isPhysicsActive && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < canvas.width - 250)) {
+      if (isPhysicsActive && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < worldWidth - 250)) {
         const isBrand = Math.random() > 0.45; // 55% chance de plataforma (antes era 40%)
 
         // Filtra só as marcas que SÃO plataformas físicas (array de pixels com mais de 1 elemento)
@@ -1463,11 +1478,11 @@ const GameEngine = () => {
         }
 
         const yPos = brand
-          ? Math.random() * (canvas.height - brandHeight - 40) + 40
-          : Math.random() * (canvas.height - 40);
+          ? Math.random() * (worldHeight - brandHeight - 40) + 40
+          : Math.random() * (worldHeight - 40);
 
         obstacles.push({
-          x: canvas.width + 100,
+          x: worldWidth + 100,
           y: yPos,
           width: brandWidth,
           height: brand ? brandHeight : 20,
@@ -1492,8 +1507,8 @@ const GameEngine = () => {
         if (brand && Math.random() < GAME_CONSTANTS.BAIT_COIN_SPAWN_CHANCE) {
           const isOnCeiling = Math.random() < 0.5;
           const baitX = isOnCeiling
-            ? canvas.width + 100 + Math.random() * 100
-            : canvas.width + 80; // Encostada na lateral esquerda da plataforma (sem ficar dentro)
+            ? worldWidth + 100 + Math.random() * 100
+            : worldWidth + 80; // Encostada na lateral esquerda da plataforma (sem ficar dentro)
           const baitY = isOnCeiling
             ? 5 // Quase no teto (zona mortal)
             : yPos + brandHeight / 2; // Meio da altura da plataforma
@@ -1520,12 +1535,12 @@ const GameEngine = () => {
 
       if (isCountingDown) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, worldWidth, worldHeight);
         ctx.fillStyle = 'white';
         ctx.font = 'bold 80px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(countdownSecs.toString(), canvas.width / 2, canvas.height / 2);
+        ctx.fillText(countdownSecs.toString(), worldWidth / 2, worldHeight / 2);
       }
 
       ctx.restore();
