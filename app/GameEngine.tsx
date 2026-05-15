@@ -626,6 +626,8 @@ const GameEngine = () => {
     let lastParallaxAdId = -1; // Anti-duplicata: rastreia última arte de fundo
     let lastBrandId = -1;      // Anti-duplicata: rastreia última plataforma
 
+    let lastJumpTime = 0;
+
     // --- NEO MODE: Matrix rain drops ---
     const matrixChars = '01ABCDEFNEOMATRIX';
     let matrixDrops: { x: number, y: number, speed: number, char: string, alpha: number }[] = [];
@@ -735,25 +737,30 @@ const GameEngine = () => {
       } else {
         if (countdownUntil > Date.now()) return;
         player.velocity = player.jumpStrength;
-        gameAudio.play('jump');
 
-        // Trail colorido baseado na skin ativa
-        const skinDef = SKINS.find(s => s.id === activeSkinRef.current);
-        const trailColor = skinDef?.trailColor || 'rgba(120, 200, 80, ALPHA)';
-        for (let i = 0; i < 5; i++) {
-          if (trailColor === 'rainbow') {
-            const hue = (Date.now() / 5 + i * 40) % 360;
-            particlePool.spawn(
-              player.x + player.width / 2, player.y + player.height,
-              (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
-              `hsla(${hue}, 100%, 60%, ALPHA)`
-            );
-          } else {
-            particlePool.spawn(
-              player.x + player.width / 2, player.y + player.height,
-              (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
-              trailColor
-            );
+        const now = Date.now();
+        if (now - lastJumpTime > 80) {
+          lastJumpTime = now;
+          gameAudio.play('jump');
+
+          // Trail colorido baseado na skin ativa
+          const skinDef = SKINS.find(s => s.id === activeSkinRef.current);
+          const trailColor = skinDef?.trailColor || 'rgba(120, 200, 80, ALPHA)';
+          for (let i = 0; i < (trailColor === 'rainbow' ? 3 : 5); i++) {
+            if (trailColor === 'rainbow') {
+              const hue = (Date.now() / 5 + i * 40) % 360;
+              particlePool.spawn(
+                player.x + player.width / 2, player.y + player.height,
+                (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
+                `hsla(${hue}, 100%, 60%, ALPHA)`
+              );
+            } else {
+              particlePool.spawn(
+                player.x + player.width / 2, player.y + player.height,
+                (Math.random() - 0.5) * 2, Math.random() * 2, 1.0, false,
+                trailColor
+              );
+            }
           }
         }
       }
@@ -2257,181 +2264,181 @@ const GameEngine = () => {
             <h2 className="text-white text-xl font-bold text-center p-6 pb-3 shrink-0">Central de Criação</h2>
 
             <div className="overflow-y-auto flex-1 px-6">
-            <div className="flex flex-col gap-4">
-            <div className="flex bg-gray-950 p-1 rounded-md border border-gray-700">
-              <button
-                onClick={() => setAdType('obstacle')}
-                className={`flex-1 py-2 text-sm font-bold rounded transition-colors ${adType === 'obstacle' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}
-              >
-                Plataforma Física
-              </button>
-              <button
-                onClick={() => setAdType('parallax')}
-                className={`flex-1 py-2 text-sm font-bold rounded transition-colors ${adType === 'parallax' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}
-              >
-                Arte de Fundo (Livre)
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-gray-400 text-xs">Nome da Marca</label>
-              <input
-                type="text"
-                maxLength={10}
-                value={brandInputName}
-                onChange={(e) => setBrandInputName(e.target.value)}
-                className="bg-gray-800 text-white p-2 rounded border border-gray-600 focus:border-blue-500 outline-none uppercase font-bold"
-                placeholder="EX: NIKE"
-              />
-            </div>
-
-            <div className="flex gap-4">
-              <div className="flex flex-col gap-2 w-1/2">
-                <div className="flex justify-between items-center">
-                  <label className="text-gray-400 text-xs">Cor de Fundo</label>
-                  <label className="flex items-center gap-1 cursor-pointer">
-                    <input type="checkbox" checked={isTransparentBg} onChange={(e) => setIsTransparentBg(e.target.checked)} className="accent-blue-500" />
-                    <span className="text-[10px] text-gray-400">Transp.</span>
-                  </label>
-                </div>
-                {!isTransparentBg ? (
-                  <input type="color" value={baseColor} onChange={(e) => setBaseColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
-                ) : (
-                  <div className="w-full h-10 rounded border border-gray-600 bg-[#1f2937] relative overflow-hidden">
-                    <div className="absolute inset-0 opacity-50" style={{ backgroundImage: 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' }} />
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-col gap-2 w-1/2">
-                <label className="text-gray-400 text-xs">Cor do Pincel</label>
-                <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
-              </div>
-            </div>
-
-
-
-            <div className="flex justify-between items-center bg-gray-800 p-2 rounded">
-              <div className="flex gap-2">
-                <button onClick={() => setDrawColor('#ffffff')} className="w-6 h-6 rounded-full bg-white border border-gray-500"></button>
-                <button onClick={() => setDrawColor('#000000')} className="w-6 h-6 rounded-full bg-black border border-gray-500"></button>
-                <button onClick={() => setDrawColor('#ef4444')} className="w-6 h-6 rounded-full bg-red-500 border border-gray-500"></button>
-                <button onClick={() => setDrawColor('#f59e0b')} className="w-6 h-6 rounded-full bg-yellow-500 border border-gray-500"></button>
-              </div>
-
-              <div className="flex gap-2 items-center">
-                <label className="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-white font-bold cursor-pointer transition-colors shadow-lg shadow-blue-500/30">
-                  📁 Upload Imagem
-                  <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-                </label>
-                <button onClick={() => setDrawColor('')} className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-white border border-gray-500">
-                  Borracha
-                </button>
-              </div>
-            </div>
-
-            {/* --- Controles de Tamanho e Prévia --- */}
-            <div className="flex flex-col md:flex-row gap-4 bg-gray-950 p-3 rounded border border-gray-700">
-              {/* Sliders */}
-              <div className="flex flex-col gap-4 w-full md:w-1/2 justify-center">
-                <div className="flex flex-col gap-1">
-                  <div className="flex justify-between text-xs text-gray-400">
-                    <span>Largura (Pixels)</span>
-                    <span className="font-bold text-white">{adCols}px</span>
-                  </div>
-                  <input type="range" min="8" max="64" value={adCols} onChange={(e) => setAdCols(parseInt(e.target.value))} className="w-full accent-blue-500" />
+              <div className="flex flex-col gap-4">
+                <div className="flex bg-gray-950 p-1 rounded-md border border-gray-700">
+                  <button
+                    onClick={() => setAdType('obstacle')}
+                    className={`flex-1 py-2 text-sm font-bold rounded transition-colors ${adType === 'obstacle' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}
+                  >
+                    Plataforma Física
+                  </button>
+                  <button
+                    onClick={() => setAdType('parallax')}
+                    className={`flex-1 py-2 text-sm font-bold rounded transition-colors ${adType === 'parallax' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}
+                  >
+                    Arte de Fundo (Livre)
+                  </button>
                 </div>
 
-                <div className="flex flex-col gap-1">
-                  <div className="flex justify-between text-xs text-gray-400">
-                    <span>Altura (Pixels)</span>
-                    <span className="font-bold text-white">{adRows}px</span>
-                  </div>
-                  <input type="range" min="8" max={adType === 'obstacle' ? 16 : 40} value={adRows} onChange={(e) => setAdRows(parseInt(e.target.value))} className={`w-full ${adType === 'obstacle' ? 'accent-blue-500' : 'accent-purple-500'}`} />
-                </div>
-              </div>
-
-              {/* Mini Janela de Prévia */}
-              <div className="w-full md:w-1/2 flex flex-col items-center">
-                <span className="text-[10px] text-gray-500 mb-1">PRÉVIA NO CENÁRIO</span>
-                <div className="w-full max-w-[200px] aspect-[2/1] bg-slate-900 border border-gray-600 rounded relative overflow-hidden shadow-inner">
-                  <div className="absolute left-[15%] bottom-[30%] w-[4%] h-[8%] bg-white rounded-sm opacity-80" />
-                  <div
-                    className={`absolute border border-white/50 transition-all duration-200 ${adType === 'parallax' ? 'bg-purple-500/50' : 'bg-blue-500/80'}`}
-                    style={{
-                      width: adType === 'obstacle' ? `${(adCols * 5) / 8}%` : `${(adCols * 10) / 8}%`,
-                      height: adType === 'obstacle' ? `10%` : `${(adRows * 10) / 4}%`,
-                      right: '20%',
-                      top: adType === 'obstacle' ? '40%' : '20%',
-                    }}
+                <div className="flex flex-col gap-2">
+                  <label className="text-gray-400 text-xs">Nome da Marca</label>
+                  <input
+                    type="text"
+                    maxLength={10}
+                    value={brandInputName}
+                    onChange={(e) => setBrandInputName(e.target.value)}
+                    className="bg-gray-800 text-white p-2 rounded border border-gray-600 focus:border-blue-500 outline-none uppercase font-bold"
+                    placeholder="EX: NIKE"
                   />
                 </div>
-              </div>
-            </div>
 
-            <div className="flex justify-center w-full overflow-hidden rounded bg-gray-900 my-2 border border-gray-700">
-              {adType === 'obstacle' ? (
-                <div
-                  className="grid cursor-crosshair touch-none shrink-0"
-                  style={{
-                    width: '100%',
-                    height: 'auto',
-                    maxHeight: '200px',
-                    maxWidth: `calc(200px * (${adCols} / ${adRows}))`,
-                    aspectRatio: `${adCols} / ${adRows}`,
-                    margin: '0 auto',
-                    backgroundColor: isTransparentBg ? '#1f2937' : baseColor,
-                    backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
-                    gridTemplateColumns: `repeat(${adCols}, minmax(0, 1fr))`,
-                    gridTemplateRows: `repeat(${adRows}, minmax(0, 1fr))`
-                  }}
-                  onMouseDown={() => setIsDrawing(true)}
-                  onMouseUp={() => setIsDrawing(false)}
-                  onMouseLeave={() => setIsDrawing(false)}
-                  onTouchStart={() => setIsDrawing(true)}
-                  onTouchEnd={() => setIsDrawing(false)}
-                >
-                  {pixelGrid.map((color, index) => (
-                    <div
-                      key={index}
-                      className="w-full h-full border border-black/10"
-                      style={{ backgroundColor: color || 'transparent' }}
-                      onMouseDown={() => paintPixel(index)}
-                      onMouseEnter={() => isDrawing && paintPixel(index)}
-                      onTouchMove={(e) => {
-                        const touch = e.touches[0];
-                        const element = document.elementFromPoint(touch.clientX, touch.clientY);
-                        if (element && element.getAttribute('data-index')) {
-                          paintPixel(parseInt(element.getAttribute('data-index')!));
-                        }
-                      }}
-                      data-index={index}
-                    />
-                  ))}
+                <div className="flex gap-4">
+                  <div className="flex flex-col gap-2 w-1/2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-gray-400 text-xs">Cor de Fundo</label>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox" checked={isTransparentBg} onChange={(e) => setIsTransparentBg(e.target.checked)} className="accent-blue-500" />
+                        <span className="text-[10px] text-gray-400">Transp.</span>
+                      </label>
+                    </div>
+                    {!isTransparentBg ? (
+                      <input type="color" value={baseColor} onChange={(e) => setBaseColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
+                    ) : (
+                      <div className="w-full h-10 rounded border border-gray-600 bg-[#1f2937] relative overflow-hidden">
+                        <div className="absolute inset-0 opacity-50" style={{ backgroundImage: 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' }} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2 w-1/2">
+                    <label className="text-gray-400 text-xs">Cor do Pincel</label>
+                    <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} className="w-full h-10 rounded cursor-pointer" />
+                  </div>
                 </div>
-              ) : (
-                <canvas
-                  ref={freeDrawCanvasRef}
-                  width={adCols * 10} height={adRows * 10}
-                  className="w-full max-h-[200px] cursor-crosshair touch-none object-contain shadow-inner"
-                  style={{
-                    backgroundColor: isTransparentBg ? '#1f2937' : 'black',
-                    backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
-                  }}
-                  onMouseDown={(e) => { isFreeDrawingRef.current = true; drawFreehand(e); }}
-                  onMouseMove={(e) => drawFreehand(e)}
-                  onMouseUp={() => isFreeDrawingRef.current = false}
-                  onMouseLeave={() => isFreeDrawingRef.current = false}
-                  onTouchStart={(e) => { isFreeDrawingRef.current = true; drawFreehand(e, true); }}
-                  onTouchMove={(e) => drawFreehand(e, true)}
-                  onTouchEnd={() => isFreeDrawingRef.current = false}
-                />
-              )}
-            </div>
 
-            <p className="text-gray-500 text-[10px] text-center mt-1">
-              {adType === 'obstacle' ? 'Arte em pixels. Vai virar um obstáculo físico no jogo.' : 'Arte em pixels. Vai flutuar no fundo do cenário (Parallax).'}
-            </p>
-            </div>
+
+
+                <div className="flex justify-between items-center bg-gray-800 p-2 rounded">
+                  <div className="flex gap-2">
+                    <button onClick={() => setDrawColor('#ffffff')} className="w-6 h-6 rounded-full bg-white border border-gray-500"></button>
+                    <button onClick={() => setDrawColor('#000000')} className="w-6 h-6 rounded-full bg-black border border-gray-500"></button>
+                    <button onClick={() => setDrawColor('#ef4444')} className="w-6 h-6 rounded-full bg-red-500 border border-gray-500"></button>
+                    <button onClick={() => setDrawColor('#f59e0b')} className="w-6 h-6 rounded-full bg-yellow-500 border border-gray-500"></button>
+                  </div>
+
+                  <div className="flex gap-2 items-center">
+                    <label className="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-white font-bold cursor-pointer transition-colors shadow-lg shadow-blue-500/30">
+                      📁 Upload Imagem
+                      <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                    </label>
+                    <button onClick={() => setDrawColor('')} className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-white border border-gray-500">
+                      Borracha
+                    </button>
+                  </div>
+                </div>
+
+                {/* --- Controles de Tamanho e Prévia --- */}
+                <div className="flex flex-col md:flex-row gap-4 bg-gray-950 p-3 rounded border border-gray-700">
+                  {/* Sliders */}
+                  <div className="flex flex-col gap-4 w-full md:w-1/2 justify-center">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between text-xs text-gray-400">
+                        <span>Largura (Pixels)</span>
+                        <span className="font-bold text-white">{adCols}px</span>
+                      </div>
+                      <input type="range" min="8" max="64" value={adCols} onChange={(e) => setAdCols(parseInt(e.target.value))} className="w-full accent-blue-500" />
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between text-xs text-gray-400">
+                        <span>Altura (Pixels)</span>
+                        <span className="font-bold text-white">{adRows}px</span>
+                      </div>
+                      <input type="range" min="8" max={adType === 'obstacle' ? 16 : 40} value={adRows} onChange={(e) => setAdRows(parseInt(e.target.value))} className={`w-full ${adType === 'obstacle' ? 'accent-blue-500' : 'accent-purple-500'}`} />
+                    </div>
+                  </div>
+
+                  {/* Mini Janela de Prévia */}
+                  <div className="w-full md:w-1/2 flex flex-col items-center">
+                    <span className="text-[10px] text-gray-500 mb-1">PRÉVIA NO CENÁRIO</span>
+                    <div className="w-full max-w-[200px] aspect-[2/1] bg-slate-900 border border-gray-600 rounded relative overflow-hidden shadow-inner">
+                      <div className="absolute left-[15%] bottom-[30%] w-[4%] h-[8%] bg-white rounded-sm opacity-80" />
+                      <div
+                        className={`absolute border border-white/50 transition-all duration-200 ${adType === 'parallax' ? 'bg-purple-500/50' : 'bg-blue-500/80'}`}
+                        style={{
+                          width: adType === 'obstacle' ? `${(adCols * 5) / 8}%` : `${(adCols * 10) / 8}%`,
+                          height: adType === 'obstacle' ? `10%` : `${(adRows * 10) / 4}%`,
+                          right: '20%',
+                          top: adType === 'obstacle' ? '40%' : '20%',
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-center w-full overflow-hidden rounded bg-gray-900 my-2 border border-gray-700">
+                  {adType === 'obstacle' ? (
+                    <div
+                      className="grid cursor-crosshair touch-none shrink-0"
+                      style={{
+                        width: '100%',
+                        height: 'auto',
+                        maxHeight: '200px',
+                        maxWidth: `calc(200px * (${adCols} / ${adRows}))`,
+                        aspectRatio: `${adCols} / ${adRows}`,
+                        margin: '0 auto',
+                        backgroundColor: isTransparentBg ? '#1f2937' : baseColor,
+                        backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
+                        gridTemplateColumns: `repeat(${adCols}, minmax(0, 1fr))`,
+                        gridTemplateRows: `repeat(${adRows}, minmax(0, 1fr))`
+                      }}
+                      onMouseDown={() => setIsDrawing(true)}
+                      onMouseUp={() => setIsDrawing(false)}
+                      onMouseLeave={() => setIsDrawing(false)}
+                      onTouchStart={() => setIsDrawing(true)}
+                      onTouchEnd={() => setIsDrawing(false)}
+                    >
+                      {pixelGrid.map((color, index) => (
+                        <div
+                          key={index}
+                          className="w-full h-full border border-black/10"
+                          style={{ backgroundColor: color || 'transparent' }}
+                          onMouseDown={() => paintPixel(index)}
+                          onMouseEnter={() => isDrawing && paintPixel(index)}
+                          onTouchMove={(e) => {
+                            const touch = e.touches[0];
+                            const element = document.elementFromPoint(touch.clientX, touch.clientY);
+                            if (element && element.getAttribute('data-index')) {
+                              paintPixel(parseInt(element.getAttribute('data-index')!));
+                            }
+                          }}
+                          data-index={index}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <canvas
+                      ref={freeDrawCanvasRef}
+                      width={adCols * 10} height={adRows * 10}
+                      className="w-full max-h-[200px] cursor-crosshair touch-none object-contain shadow-inner"
+                      style={{
+                        backgroundColor: isTransparentBg ? '#1f2937' : 'black',
+                        backgroundImage: isTransparentBg ? 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiMzNzQxNTEiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMzc0MTUxIi8+PC9zdmc+")' : 'none',
+                      }}
+                      onMouseDown={(e) => { isFreeDrawingRef.current = true; drawFreehand(e); }}
+                      onMouseMove={(e) => drawFreehand(e)}
+                      onMouseUp={() => isFreeDrawingRef.current = false}
+                      onMouseLeave={() => isFreeDrawingRef.current = false}
+                      onTouchStart={(e) => { isFreeDrawingRef.current = true; drawFreehand(e, true); }}
+                      onTouchMove={(e) => drawFreehand(e, true)}
+                      onTouchEnd={() => isFreeDrawingRef.current = false}
+                    />
+                  )}
+                </div>
+
+                <p className="text-gray-500 text-[10px] text-center mt-1">
+                  {adType === 'obstacle' ? 'Arte em pixels. Vai virar um obstáculo físico no jogo.' : 'Arte em pixels. Vai flutuar no fundo do cenário (Parallax).'}
+                </p>
+              </div>
             </div>
 
             <div className="flex justify-between gap-4 p-6 pt-3 shrink-0">

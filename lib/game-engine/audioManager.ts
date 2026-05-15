@@ -1,5 +1,7 @@
 export class AudioManager {
   private sounds: Map<string, HTMLAudioElement>;
+  private pools: Map<string, HTMLAudioElement[]>;
+  private poolRotators: Map<string, number>;
 
   private currentMusic: HTMLAudioElement | null = null;
   public isMutedSFX: boolean = false;
@@ -7,6 +9,8 @@ export class AudioManager {
 
   constructor() {
     this.sounds = new Map();
+    this.pools = new Map();
+    this.poolRotators = new Map();
   }
 
   public loadSound(name: string, path: string) {
@@ -27,13 +31,30 @@ export class AudioManager {
   public play(name: string) {
     if (this.isMutedSFX) return;
     const original = this.sounds.get(name);
-    if (original) {
-      // Clonar o nó permite que o mesmo som toque múltiplas vezes simultaneamente
-      // Ideal para feedback de coleta de moedas ou partículas
-      const clone = original.cloneNode() as HTMLAudioElement;
-      clone.volume = original.volume;
-      clone.play().catch(() => {});
+    if (!original) return;
+
+    let pool = this.pools.get(name);
+    if (!pool) {
+      pool = [];
+      this.pools.set(name, pool);
+      this.poolRotators.set(name, 0);
     }
+
+    // Round-robin: toca o próximo elemento do pool, ou cria um se pool < 3
+    const rot = (this.poolRotators.get(name) || 0) % Math.max(pool.length, 1);
+    let el: HTMLAudioElement;
+
+    if (pool.length < 3) {
+      el = original.cloneNode() as HTMLAudioElement;
+      el.volume = original.volume;
+      pool.push(el);
+    } else {
+      el = pool[rot];
+      el.currentTime = 0;
+    }
+
+    this.poolRotators.set(name, rot + 1);
+    el.play().catch(() => {});
   }
 
   public stopMusic() {
