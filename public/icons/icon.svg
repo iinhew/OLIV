@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" fill="#000" rx="32" ry="32"/>
+  <g transform="translate(96,96)">
+    <!-- Olive body -->
+    <ellipse cx="0" cy="0" rx="40" ry="55" fill="#60a832" stroke="#4a8828" stroke-width="3"/>
+    <!-- Highlight -->
+    <ellipse cx="-10" cy="-16" rx="10" ry="20" fill="rgba(255,255,255,0.15)" transform="rotate(-10,-10,-16)"/>
+    <!-- Seed -->
+    <ellipse cx="0" cy="2" rx="16" ry="24" fill="#8b6f3c" opacity="0.5"/>
+    <!-- Stem -->
+    <rect x="-3" y="-68" width="6" height="16" rx="3" fill="#5a3a1a"/>
+    <ellipse cx="0" cy="-68" rx="5" ry="3" fill="#5a3a1a"/>
+  </g>
+</svg>
