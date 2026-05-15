@@ -880,7 +880,9 @@ const GameEngine = () => {
       }
 
       if (shakeFrames > 0) {
-        ctx.translate(Math.random() * 10 - 5, Math.random() * 10 - 5);
+        const shakeX = (Math.random() - 0.5) * (mobileScale < 1 ? 4 : 10);
+        const shakeY = (Math.random() - 0.5) * (mobileScale < 1 ? 4 : 10);
+        ctx.translate(shakeX, shakeY);
         shakeFrames -= dt;
       }
 
@@ -1159,9 +1161,9 @@ const GameEngine = () => {
           }
         }
 
-        // Flicker babilônico: obstáculos piscam aleatoriamente
+        // Flicker babilônico: obstáculos piscam aleatoriamente (desligado no mobile)
         let babylonFlicker = 1;
-        if (babylonModeRef.current) {
+        if (babylonModeRef.current && mobileScale >= 1) {
           babylonFlicker = Math.random() < 0.10 ? 0.2 + Math.random() * 0.5 : 1;
           if (babylonFlicker < 1) ctx.save();
         }
@@ -1227,16 +1229,15 @@ const GameEngine = () => {
 
           if (obs.hasSpikes && obs.spikeZones) {
             const spikeBright = 0.6 + Math.sin(Date.now() / 150) * 0.4;
+            ctx.fillStyle = `rgba(255, ${Math.floor(60 * spikeBright)}, ${Math.floor(30 * spikeBright)}, ${spikeBright})`;
             for (const zone of obs.spikeZones) {
+              ctx.beginPath();
               for (let sx = obs.x + zone.start; sx < obs.x + zone.end; sx += 4) {
-                ctx.beginPath();
                 ctx.moveTo(sx, obs.y);
                 ctx.lineTo(sx + 2, obs.y - GAME_CONSTANTS.SPIKE_HEIGHT);
                 ctx.lineTo(sx + 4, obs.y);
-                ctx.closePath();
-                ctx.fillStyle = `rgba(255, ${Math.floor(60 * spikeBright)}, ${Math.floor(30 * spikeBright)}, ${spikeBright})`;
-                ctx.fill();
               }
+              ctx.fill();
             }
           }
           if (babylonFlicker < 1) ctx.restore();
