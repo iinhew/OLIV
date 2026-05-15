@@ -6,12 +6,12 @@ export const generateRandomGuestName = (): string => {
   ];
   const nouns = [
     'Voador', 'Sorridente', 'Chorao', 'Brilhante', 'Escuro', 'Gordo', 'Fininho', 'Gigante',
-    'Amarelo', 'Azul', 'Vermelho', 'Verde', 'Roxo', 'Rosa', 'Preto', 'Branco'
+    'Amarelo', 'Azul', 'Vermelho', 'Verde', 'Roxo', 'Rosa', 'Preto', 'Branco', 'Frito'
   ];
-  
+
   const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
   const noun = nouns[Math.floor(Math.random() * nouns.length)];
   const number = Math.floor(Math.random() * 9999);
-  
+
   return `${adj}_${noun}_${number}`;
 };
