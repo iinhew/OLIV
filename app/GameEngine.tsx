@@ -875,6 +875,7 @@ const GameEngine = () => {
     let countdownUntil = 0;
     let lastParallaxAdId = -1; // Anti-duplicata: rastreia última arte de fundo
     let lastBrandId = -1;      // Anti-duplicata: rastreia última plataforma
+    let floorScroll = 0;       // Animação de Chão/Teto
 
     let lastJumpTime = 0;
 
@@ -1179,6 +1180,45 @@ const GameEngine = () => {
           });
         });
       }
+
+      // 3. Renderiza as Artes Livres (Parallax) ATRÁS do chão e teto
+      for (let i = activeParallaxAds.length - 1; i >= 0; i--) {
+        let ad = activeParallaxAds[i];
+        if (isPhysicsActive) ad.x -= ad.speed * dt;
+
+        if (ad.img && ad.img.complete) {
+          ctx.globalAlpha = Math.min(ad.alpha, 1);
+          ctx.drawImage(ad.img, ad.x, ad.y, ad.width, ad.height);
+          ctx.globalAlpha = 1.0; // Restaura a opacidade para o resto do jogo
+        }
+        if (ad.x + ad.width < -100) activeParallaxAds.splice(i, 1);
+      }
+
+      // --- RENDERIZA CHÃO E TETO ---
+      if (isPhysicsActive) {
+        floorScroll -= gameSpeed * dt * 2;
+        if (floorScroll <= -40) floorScroll = 0;
+      }
+      
+      // Teto
+      ctx.fillStyle = '#2d2d2d';
+      ctx.fillRect(0, 0, canvas.width, CEILING_HEIGHT);
+      ctx.fillStyle = '#444';
+      ctx.fillRect(0, CEILING_HEIGHT - 4, canvas.width, 4);
+      
+      // Chão
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(0, canvas.height - FLOOR_HEIGHT, canvas.width, FLOOR_HEIGHT);
+      ctx.fillStyle = '#333';
+      ctx.fillRect(0, canvas.height - FLOOR_HEIGHT, canvas.width, 6);
+      
+      // Detalhes rolando
+      ctx.fillStyle = '#0a0a0a';
+      for(let x = floorScroll; x < canvas.width; x += 40) {
+        ctx.fillRect(x, 0, 15, CEILING_HEIGHT);
+        ctx.fillRect(x, canvas.height - FLOOR_HEIGHT, 15, FLOOR_HEIGHT);
+      }
+      // -----------------------------
 
       // 2. Lógica de Física e Geração de Artes de Fundo (Parallax Ads)
       if (isPhysicsActive) {
@@ -1500,7 +1540,42 @@ const GameEngine = () => {
           if (babylonFlicker < 1) ctx.globalAlpha = babylonFlicker;
           // Apenas renderiza itens que não são baseados em grade
           if (!obs.isBrand) {
-            const imgRef = obs.isMagnet ? magnetImageRef : obs.isRedCoin ? redCoinImageRef : coinImageRef;
+            if (obs.isLava || obs.isCone || obs.isAdSign) {
+              if (obs.isLava) {
+                const glow = (Math.sin(Date.now() / 150) + 1) / 2; // 0 to 1
+                
+                // Outer block (pulses from red to dark orange)
+                ctx.fillStyle = `rgb(255, ${Math.floor(30 + glow * 60)}, 0)`;
+                ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                
+                // Inner block (pulses from bright orange to yellow)
+                ctx.fillStyle = `rgb(255, ${Math.floor(120 + glow * 80)}, 0)`;
+                ctx.fillRect(obs.x + 5, obs.y + 5 + (glow * 2), obs.width - 10, obs.height - 5 - (glow * 2));
+                
+                // Little bubbles that appear/disappear based on glow
+                ctx.fillStyle = `rgba(255, 255, 0, ${glow})`;
+                ctx.fillRect(obs.x + 10, obs.y + 2, 6, 3);
+                ctx.fillRect(obs.x + obs.width - 20, obs.y + 4, 4, 2);
+              } else if (obs.isCone) {
+                ctx.fillStyle = '#ff6600';
+                ctx.beginPath();
+                ctx.moveTo(obs.x + obs.width / 2, obs.y);
+                ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
+                ctx.lineTo(obs.x, obs.y + obs.height);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = 'white';
+                ctx.fillRect(obs.x + 4, obs.y + obs.height / 2, obs.width - 8, 6);
+              } else if (obs.isAdSign) {
+                ctx.fillStyle = '#111';
+                ctx.fillRect(obs.x + obs.width/2 - 2, obs.y, 4, 10); // Cordinhas
+                ctx.fillStyle = '#000';
+                ctx.fillRect(obs.x, obs.y + 10, obs.width, obs.height - 10); // Placa
+                ctx.fillStyle = (Math.floor(Date.now() / 400) % 2 === 0) ? '#ff0055' : '#00ffff';
+                ctx.fillRect(obs.x + 2, obs.y + 12, obs.width - 4, obs.height - 14); // Neon
+              }
+            } else {
+              const imgRef = obs.isMagnet ? magnetImageRef : obs.isRedCoin ? redCoinImageRef : coinImageRef;
             if (imgRef.current && imgRef.current.complete) {
               let sourceX = 0, sourceY = 0, sourceSizeX = 0, sourceSizeY = 0;
               let destX = obs.x - 5;
@@ -1586,6 +1661,7 @@ const GameEngine = () => {
                 ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
               }
             }
+            }
           }
           if (babylonFlicker < 1) ctx.restore();
         }
@@ -1598,6 +1674,22 @@ const GameEngine = () => {
 
         // Colisão
         if (isPhysicsActive && PhysicsEngine.checkCollision({ x: player.x, y: renderY, width: player.width, height: player.height }, obs)) {
+          if (obs.isLava || obs.isCone || obs.isAdSign) {
+            if (neoModeRef.current && neoExtraLifeRef.current > 0) {
+              neoExtraLifeRef.current = 0;
+              player.y = Math.min(150, canvas.height / 2);
+              player.velocity = 0;
+              obstacles = [];
+              activeParallaxAds = [];
+              countdownUntil = Date.now() + 3000;
+              for (let j = 0; j < 20; j++) {
+                particlePool.spawn(player.x + player.width / 2, player.y + player.height / 2, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, 1.5, false, 'rgba(0, 255, 70, ALPHA)');
+              }
+            } else {
+              triggerGameOver();
+            }
+            break;
+          }
           if (obs.isBrand) {
             if (player.velocity > 0 && player.y + player.height - player.velocity <= obs.y + 10) {
               if (obs.hasSpikes && obs.spikeZones) {
@@ -1817,6 +1909,7 @@ const GameEngine = () => {
             isBreakable: false,
             isBouncy: false
           });
+        }
         }
       }
 
