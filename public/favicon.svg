@@ -1,5 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <rect width="32" height="32" fill="#000"/>
-  <ellipse cx="16" cy="16" rx="8" ry="12" fill="#60a832" stroke="#4a8828" stroke-width="1"/>
-  <rect x="14" y="3" width="4" height="4" rx="2" fill="#5a3a1a"/>
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 20010904//EN"
+ "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg version="1.0" xmlns="http://www.w3.org/2000/svg"
+ width="183.000000pt" height="182.000000pt" viewBox="0 0 183.000000 182.000000"
+ preserveAspectRatio="xMidYMid meet">
+
+<g transform="translate(0.000000,182.000000) scale(0.100000,-0.100000)"
+fill="#000000" stroke="none">
+<path d="M500 820 l0 -500 500 0 500 0 0 500 0 500 -500 0 -500 0 0 -500z"/>
+</g>
 </svg>

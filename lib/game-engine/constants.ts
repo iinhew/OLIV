@@ -1,7 +1,7 @@
 export const GAME_CONSTANTS = {
   // Configurações Físicas da Azeitona
   PLAYER_START_X: 350,
-  PLAYER_START_Y: 150,
+  PLAYER_START_Y: 300,
   PLAYER_WIDTH: 20,
   PLAYER_HEIGHT: 20,
   GRAVITY: 0.4,

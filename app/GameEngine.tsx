@@ -89,6 +89,11 @@ const GameEngine = () => {
     setLoadingRanking(true);
     setRankingData([]);
 
+    if (!isOnline) {
+      setLoadingRanking(false);
+      return;
+    }
+
     if (mode === 'babylon') {
       const { data, error } = await supabase.from('players').select('username, babylon_high_score').order('babylon_high_score', { ascending: false, nullsFirst: false }).limit(50);
       if (data) {
@@ -107,6 +112,9 @@ const GameEngine = () => {
     setLoadingRanking(false);
   };
   // -----------------------------
+
+  const [isOnline, setIsOnline] = useState(true);
+  const [pendingSync, setPendingSync] = useState(false);
 
   const [gameState, setGameState] = useState({
     hasStarted: false,
@@ -203,6 +211,21 @@ const GameEngine = () => {
     window.addEventListener('keydown', handleKonami);
     return () => window.removeEventListener('keydown', handleKonami);
   }, [view]);
+  // -------------------------------------------------------
+
+  // --- Monitor de conectividade ---
+  useEffect(() => {
+    setIsOnline(navigator.onLine);
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
   // -------------------------------------------------------
 
   // --- Fundo animado "Tubo Digital" para o Mural ---
@@ -450,7 +473,8 @@ const GameEngine = () => {
     // BUSCA DO SUPABASE (Função assíncrona)
     const fetchGlobalBrands = async () => {
       const { data, error } = await supabase.from('canvas_brands').select('*');
-      if (data) {
+      if (data && data.length > 0) {
+        setIsOnline(true);
         purchasedBrandsRef.current = data;
         setBrandsUI(data);
 
@@ -466,6 +490,30 @@ const GameEngine = () => {
             }
           }
         });
+      } else {
+        setIsOnline(false);
+        // Fallback offline: gera blocos coloridos aleatórios
+        const fallback: CustomBrand[] = [];
+        const colors = ['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7','#ec4899'];
+        const colorNames = ['VERMELHO','LARANJA','VERDE','AZUL','ROXO','ROSA'];
+        const slotIndices = [0,5,10,15,20,25,30,35,40,45,
+                            1,6,11,16,21,26,31,36,41,46,
+                            2,7,12,17,22,27,32,37,42,47];
+        for (let i = 0; i < 12; i++) {
+          const idx = slotIndices[i];
+          const ci = i % colors.length;
+          const cols = 16;
+          const rows = 8;
+          const pixels: string[] = [`META:${cols}:${rows}:0:0`];
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              pixels.push(Math.random() < 0.6 ? colors[ci] : '');
+            }
+          }
+          fallback.push({ id: idx, name: `OFFLINE ${colorNames[ci]}`, color: colors[ci], pixel_data: pixels });
+        }
+        purchasedBrandsRef.current = fallback;
+        setBrandsUI(fallback);
       }
     };
     fetchGlobalBrands(); // Chama a função assim que o jogo carrega
@@ -893,13 +941,17 @@ const GameEngine = () => {
         currentHighScore = Math.floor(score);
         if (babylonModeRef.current) {
           localStorage.setItem(GAME_CONSTANTS.BABYLON_LS_KEY, currentHighScore.toString());
-          if (guestUserRef.current) {
+          if (guestUserRef.current && isOnline) {
             supabase.from('players').update({ babylon_high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+          } else if (guestUserRef.current) {
+            setPendingSync(true);
           }
         } else {
           localStorage.setItem('pixelArenaHighScore', currentHighScore.toString());
-          if (guestUserRef.current) {
+          if (guestUserRef.current && isOnline) {
             supabase.from('players').update({ high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+          } else if (guestUserRef.current) {
+            setPendingSync(true);
           }
         }
       }
@@ -2309,6 +2361,28 @@ const GameEngine = () => {
           )}
         </div>
       )}
+      {!isOnline && (
+        <div className="fixed bottom-4 right-4 z-50 bg-red-900/90 border border-red-500 text-red-300 font-mono text-[10px] px-3 py-1.5 rounded-full shadow-[0_0_15px_rgba(255,0,0,0.3)] flex items-center gap-1.5 pointer-events-none">
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          {pendingSync ? 'OFFLINE · SINC PENDENTE' : 'OFFLINE'}
+        </div>
+      )}
+      {pendingSync && isOnline && (
+        <div className="fixed bottom-4 right-4 z-50 bg-yellow-900/90 border border-yellow-500 text-yellow-300 font-mono text-[10px] px-3 py-1.5 rounded-full shadow-[0_0_15px_rgba(255,200,0,0.3)] cursor-pointer select-none"
+          onClick={() => {
+            if (!guestUserRef.current) return;
+            const hs = parseInt(localStorage.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
+            if (hs > 0) {
+              const col = babylonModeRef.current ? 'babylon_high_score' : 'high_score';
+              supabase.from('players').update({ [col]: hs }).eq('id', guestUserRef.current.id).then(() => setPendingSync(false));
+            } else {
+              setPendingSync(false);
+            }
+          }}
+        >
+          SINC PENDENTE — Toque para enviar
+        </div>
+      )}
       {neoMode && view === 'canvas' && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-black/90 border border-green-500 text-green-400 font-mono text-xs px-4 py-2 rounded-full shadow-[0_0_20px_rgba(0,255,70,0.5)] animate-pulse pointer-events-none">
           &#9672; MODO MATRIX ATIVADO &#9672; VIDA EXTRA ATIVA
@@ -2342,7 +2416,11 @@ const GameEngine = () => {
                       <span className="text-blue-400 font-bold">{player.high_score} pts</span>
                     </div>
                   ))}
-                  {rankingData.length === 0 && <div className="text-center text-gray-500">Nenhum jogador encontrado.</div>}
+                  {rankingData.length === 0 && (
+                    <div className="text-center text-gray-500 py-6">
+                      {!isOnline ? 'Sem conexão. Conecte-se à internet para ver o ranking.' : 'Nenhum jogador encontrado.'}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2450,13 +2528,14 @@ const GameEngine = () => {
                           activeSkinRef.current = skin.id;
                           localStorage.setItem('olivActiveSkin', skin.id);
                         }}
-                        disabled={!canAfford}
-                        className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford
+                        disabled={!canAfford || !isOnline}
+                        className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford && isOnline
                           ? 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg shadow-yellow-600/20'
                           : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                           }`}
+                        title={!isOnline ? 'Indisponível offline' : ''}
                       >
-                        Comprar
+                        {!isOnline ? 'Offline' : 'Comprar'}
                       </button>
                     )}
                   </div>
@@ -2655,8 +2734,14 @@ const GameEngine = () => {
 
             <div className="flex justify-between gap-4 p-6 pt-3 shrink-0">
               <button onClick={() => setBuyModalOpen(false)} className="w-1/2 py-2 text-gray-300 hover:text-white border border-gray-600 rounded">Cancelar</button>
-              <button onClick={handleConfirmPurchase} className={`w-1/2 py-2 text-white font-bold rounded shadow-lg ${adType === 'parallax' ? 'bg-purple-600 hover:bg-purple-500 shadow-purple-500/30' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'}`}>
-                Comprar ({adCols * adRows} Px)
+              <button
+                onClick={() => {
+                  if (!isOnline) { alert('Criação indisponível no modo offline.'); return; }
+                  handleConfirmPurchase();
+                }}
+                className={`w-1/2 py-2 text-white font-bold rounded shadow-lg ${adType === 'parallax' ? 'bg-purple-600 hover:bg-purple-500 shadow-purple-500/30' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'} ${!isOnline ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                {!isOnline ? 'Offline' : `Comprar (${adCols * adRows} Px)`}
               </button>
             </div>
           </div>
