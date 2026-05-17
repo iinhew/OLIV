@@ -1194,6 +1194,9 @@ const GameEngine = () => {
         if (ad.x + ad.width < -100) activeParallaxAds.splice(i, 1);
       }
 
+      const CEILING_HEIGHT = 40;
+      const FLOOR_HEIGHT = 40;
+
       // --- RENDERIZA CHÃO E TETO ---
       if (isPhysicsActive) {
         floorScroll -= gameSpeed * dt * 2;
@@ -1909,7 +1912,6 @@ const GameEngine = () => {
             isBreakable: false,
             isBouncy: false
           });
-        }
         }
       }
 
