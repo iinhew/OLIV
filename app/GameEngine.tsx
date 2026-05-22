@@ -1,5 +1,6 @@
 'use client';
 import React, { useRef, useEffect, useState } from 'react';
+import { StorageManager } from '../lib/storage';
 import { supabase } from '../lib/supabase'; // <-- NOVA LINHA
 import { GAME_CONSTANTS } from '../lib/game-engine/constants';
 import { ParticlePool } from '../lib/game-engine/particlePool';
@@ -437,34 +438,34 @@ const GameEngine = () => {
           guestUserRef.current = player;
           setGuestUser(player);
           pixelsRef.current = player.pixels;
-          localStorage.setItem('pixelArenaHighScore', player.high_score.toString());
-          localStorage.setItem('pixelArenaPixels', player.pixels.toString());
+          StorageManager.setItem('pixelArenaHighScore', player.high_score.toString());
+          StorageManager.setItem('pixelArenaPixels', player.pixels.toString());
           setShowGuestModal(false);
           setGameState(prev => ({ ...prev, highScore: player.high_score }));
           return;
         }
       }
 
-      const savedId = localStorage.getItem('olivGuestId');
+      const savedId = StorageManager.getItem('olivGuestId');
       if (savedId) {
         const { data } = await supabase.from('players').select('*').eq('id', savedId).single();
         if (data && !data.auth_id) {
           guestUserRef.current = data;
           setGuestUser(data);
           pixelsRef.current = data.pixels;
-          localStorage.setItem('pixelArenaHighScore', data.high_score.toString());
-          localStorage.setItem('pixelArenaPixels', data.pixels.toString());
+          StorageManager.setItem('pixelArenaHighScore', data.high_score.toString());
+          StorageManager.setItem('pixelArenaPixels', data.pixels.toString());
           setShowGuestModal(false);
           setGameState(prev => ({ ...prev, highScore: data.high_score }));
         } else {
-          localStorage.removeItem('olivGuestId');
+          StorageManager.removeItem('olivGuestId');
           setGuestInputName(generateRandomGuestName());
         }
       } else {
         setGuestInputName(generateRandomGuestName());
       }
 
-      pixelsRef.current = pixelsRef.current || parseInt(localStorage.getItem('pixelArenaPixels') || '0');
+      pixelsRef.current = pixelsRef.current || parseInt(StorageManager.getItem('pixelArenaPixels') || '0');
       setDisplayPixels(pixelsRef.current);
     };
 
@@ -569,7 +570,7 @@ const GameEngine = () => {
     } else {
       // SE DEU CERTO, aí sim desconta os pixels e atualiza a tela
       pixelsRef.current -= currentCost;
-      localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+      StorageManager.setItem('pixelArenaPixels', pixelsRef.current.toString());
       setDisplayPixels(pixelsRef.current);
       if (guestUserRef.current) {
         supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
@@ -788,11 +789,11 @@ const GameEngine = () => {
     });
 
     // Restaura skins do localStorage
-    const savedOwned = localStorage.getItem('olivOwnedSkins');
+    const savedOwned = StorageManager.getItem('olivOwnedSkins');
     if (savedOwned) {
       try { const parsed = JSON.parse(savedOwned); setOwnedSkins(parsed); } catch { }
     }
-    const savedActive = localStorage.getItem('olivActiveSkin');
+    const savedActive = StorageManager.getItem('olivActiveSkin');
     if (savedActive) {
       setActiveSkinId(savedActive);
       activeSkinRef.current = savedActive;
@@ -894,7 +895,7 @@ const GameEngine = () => {
     initMatrixDrops(worldWidth, worldHeight);
     // ------------------------------------
 
-    let currentHighScore = parseInt(localStorage.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
+    let currentHighScore = parseInt(StorageManager.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
     setGameState(prev => ({ ...prev, highScore: currentHighScore }));
 
 
@@ -941,14 +942,14 @@ const GameEngine = () => {
       if (Math.floor(score) > currentHighScore) {
         currentHighScore = Math.floor(score);
         if (babylonModeRef.current) {
-          localStorage.setItem(GAME_CONSTANTS.BABYLON_LS_KEY, currentHighScore.toString());
+          StorageManager.setItem(GAME_CONSTANTS.BABYLON_LS_KEY, currentHighScore.toString());
           if (guestUserRef.current && isOnline) {
             supabase.from('players').update({ babylon_high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
           } else if (guestUserRef.current) {
             setPendingSync(true);
           }
         } else {
-          localStorage.setItem('pixelArenaHighScore', currentHighScore.toString());
+          StorageManager.setItem('pixelArenaHighScore', currentHighScore.toString());
           if (guestUserRef.current && isOnline) {
             supabase.from('players').update({ high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
           } else if (guestUserRef.current) {
@@ -1075,7 +1076,7 @@ const GameEngine = () => {
       if (babylonRestartRef.current) {
         babylonRestartRef.current = false;
         if (babylonModeRef.current) {
-          currentHighScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
+          currentHighScore = parseInt(StorageManager.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
           setGameState(prev => ({ ...prev, highScore: currentHighScore }));
         }
         if (hasStarted && !isGameOver) {
@@ -1775,7 +1776,7 @@ const GameEngine = () => {
               }
               gameAudio.play('coin');
               pixelsRef.current += GAME_CONSTANTS.BAIT_COIN_VALUE;
-              localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+              StorageManager.setItem('pixelArenaPixels', pixelsRef.current.toString());
               setDisplayPixels(pixelsRef.current);
               if (guestUserRef.current) {
                 supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
@@ -1791,7 +1792,7 @@ const GameEngine = () => {
               }
               gameAudio.play('coin');
               pixelsRef.current += 1;
-              localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+              StorageManager.setItem('pixelArenaPixels', pixelsRef.current.toString());
               if (pixelsRef.current % 5 === 0) {
                 setDisplayPixels(pixelsRef.current);
                 if (guestUserRef.current) {
@@ -1950,7 +1951,7 @@ const GameEngine = () => {
     const finalName = guestInputName.trim() || generateRandomGuestName();
     const { data, error } = await supabase.from('players').insert([{ username: finalName, pixels: pixelsRef.current, high_score: gameState.highScore }]).select('*').single();
     if (data) {
-      localStorage.setItem('olivGuestId', data.id);
+      StorageManager.setItem('olivGuestId', data.id);
       guestUserRef.current = data;
       setGuestUser(data);
       setShowGuestModal(false);
@@ -1990,7 +1991,7 @@ const GameEngine = () => {
         }
       }
 
-      const savedId = localStorage.getItem('olivGuestId');
+      const savedId = StorageManager.getItem('olivGuestId');
       if (savedId) {
         // Vincula a conta existente ao auth
         const usernameToUse = signUpUsername.trim() || cleanEmail.split('@')[0].substring(0, 15).toUpperCase();
@@ -2051,7 +2052,7 @@ const GameEngine = () => {
           await supabase.from('players').update({ high_score: mergedHighScore, pixels: mergedPixels }).eq('id', existingPlayer.id);
           // Deleta o perfil de convidado se existir
           if (savedId) await supabase.from('players').delete().eq('id', savedId);
-          localStorage.removeItem('olivGuestId');
+          StorageManager.removeItem('olivGuestId');
           guestUserRef.current = { ...existingPlayer, high_score: mergedHighScore, pixels: mergedPixels };
           setGuestUser(guestUserRef.current as any);
           pixelsRef.current = mergedPixels;
@@ -2095,8 +2096,8 @@ const GameEngine = () => {
         pixelsRef.current = player.pixels;
         setDisplayPixels(player.pixels);
         setGameState(prev => ({ ...prev, highScore: player.high_score }));
-        localStorage.setItem('pixelArenaHighScore', player.high_score.toString());
-        localStorage.setItem('pixelArenaPixels', player.pixels.toString());
+        StorageManager.setItem('pixelArenaHighScore', player.high_score.toString());
+        StorageManager.setItem('pixelArenaPixels', player.pixels.toString());
         setShowGuestModal(false);
       } else {
         // Usuário autenticado mas sem perfil - cria um automaticamente
@@ -2123,9 +2124,9 @@ const GameEngine = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    localStorage.removeItem('olivGuestId');
-    localStorage.removeItem('pixelArenaHighScore');
-    localStorage.removeItem('pixelArenaPixels');
+    StorageManager.removeItem('olivGuestId');
+    StorageManager.removeItem('pixelArenaHighScore');
+    StorageManager.removeItem('pixelArenaPixels');
     guestUserRef.current = null;
     setGuestUser(null);
     pixelsRef.current = 0;
@@ -2466,7 +2467,7 @@ const GameEngine = () => {
         <div className="fixed bottom-4 right-4 z-50 bg-yellow-900/90 border border-yellow-500 text-yellow-300 font-mono text-[10px] px-3 py-1.5 rounded-full shadow-[0_0_15px_rgba(255,200,0,0.3)] cursor-pointer select-none"
           onClick={() => {
             if (!guestUserRef.current) return;
-            const hs = parseInt(localStorage.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
+            const hs = parseInt(StorageManager.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
             if (hs > 0) {
               const col = babylonModeRef.current ? 'babylon_high_score' : 'high_score';
               supabase.from('players').update({ [col]: hs }).eq('id', guestUserRef.current.id).then(() => setPendingSync(false));
@@ -2601,7 +2602,7 @@ const GameEngine = () => {
                       <span className="text-green-400 text-xs font-bold px-3 py-1.5">✓ Equipada</span>
                     ) : isOwned ? (
                       <button
-                        onClick={() => { setActiveSkinId(skin.id); activeSkinRef.current = skin.id; localStorage.setItem('olivActiveSkin', skin.id); }}
+                        onClick={() => { setActiveSkinId(skin.id); activeSkinRef.current = skin.id; StorageManager.setItem('olivActiveSkin', skin.id); }}
                         className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95"
                       >
                         Equipar
@@ -2612,16 +2613,16 @@ const GameEngine = () => {
                           if (!canAfford) return;
                           pixelsRef.current -= skin.price;
                           setDisplayPixels(pixelsRef.current);
-                          localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+                          StorageManager.setItem('pixelArenaPixels', pixelsRef.current.toString());
                           if (guestUserRef.current) {
                             supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
                           }
                           const newOwned = [...ownedSkins, skin.id];
                           setOwnedSkins(newOwned);
-                          localStorage.setItem('olivOwnedSkins', JSON.stringify(newOwned));
+                          StorageManager.setItem('olivOwnedSkins', JSON.stringify(newOwned));
                           setActiveSkinId(skin.id);
                           activeSkinRef.current = skin.id;
-                          localStorage.setItem('olivActiveSkin', skin.id);
+                          StorageManager.setItem('olivActiveSkin', skin.id);
                         }}
                         disabled={!canAfford || !isOnline}
                         className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford && isOnline
@@ -2858,7 +2859,7 @@ const GameEngine = () => {
                 setBabylonMode(next);
                 if (next) {
                   babylonRestartRef.current = true;
-                  const babylonScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
+                  const babylonScore = parseInt(StorageManager.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
                   setGameState(prev => ({ ...prev, highScore: babylonScore }));
                 }
                 const musicKey = neoModeRef.current ? 'bgm_matrix' : next ? 'bgm_hardmode' : 'bgm';

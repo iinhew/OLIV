@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OLIV — Pixel Arena",
+  title: "OLIV",
   description: "Conquiste território no canvas, colete Pixels e desafie a gravidade.",
   manifest: "/manifest.json",
   appleWebApp: {
@@ -23,12 +23,10 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/icons/icon.svg", sizes: "192x192", type: "image/svg+xml" },
-      { url: "/icons/icon.svg", sizes: "512x512", type: "image/svg+xml" },
+      { url: "/icon.png", type: "image/png" }
     ],
     apple: [
-      { url: "/icons/icon.svg", sizes: "192x192" },
+      { url: "/icon.png", type: "image/png", sizes: "192x192" },
     ],
   },
 };
