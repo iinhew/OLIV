@@ -1,17 +1,17 @@
-const CACHE_STATIC = 'oliv-static-v1';
-const CACHE_DYNAMIC = 'oliv-dynamic-v1';
+const CACHE_STATIC = 'oliv-static-v2';
+const CACHE_DYNAMIC = 'oliv-dynamic-v2';
 
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
-  '/icons/icon.svg',
   '/favicon.svg',
+  '/icons/icon.svg',
   '/images/olive.png',
+  '/images/olive_neo.png',
   '/images/coin.png',
   '/images/ima.png',
   '/images/redcoin.png',
   '/images/crown.png',
-  '/images/olive_neo.png',
   '/images/icon_pause.png',
   '/images/icon_play.png',
   '/images/icon_trophy.png',
@@ -19,6 +19,12 @@ const STATIC_ASSETS = [
   '/images/icon_sound_muted.png',
   '/images/icon_music.png',
   '/images/icon_music_muted.png',
+  '/images/skin_olive_rainbow.png',
+  '/images/skin_pear.png',
+  '/images/skin_orange.png',
+  '/images/skin_pepper.png',
+  '/images/skin_banana.png',
+  '/images/skin_bacon.png',
   '/sounds/pop.wav',
   '/sounds/coin.wav',
   '/sounds/jump.wav',
@@ -58,12 +64,10 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Supabase API — network only, no cache
   if (url.hostname.includes('supabase')) {
     return;
   }
 
-  // Next.js static assets with content hash — cache first
   if (url.pathname.startsWith('/_next/static/')) {
     event.respondWith(
       caches.match(request).then((cached) => {
@@ -77,7 +81,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static public assets — cache first
   if (
     url.pathname.startsWith('/images/') ||
     url.pathname.startsWith('/sounds/') ||
@@ -97,7 +100,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigation (HTML pages) — network first, fallback to cache
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request).then((response) => {
@@ -113,7 +115,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Everything else — network first
   event.respondWith(
     fetch(request).then((response) => {
       const clone = response.clone();

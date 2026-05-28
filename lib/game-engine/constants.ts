@@ -1,7 +1,7 @@
 export const GAME_CONSTANTS = {
   // Configurações Físicas da Azeitona
   PLAYER_START_X: 350,
-  PLAYER_START_Y: 150,
+  PLAYER_START_Y: 300,
   PLAYER_WIDTH: 20,
   PLAYER_HEIGHT: 20,
   GRAVITY: 0.4,
@@ -47,6 +47,10 @@ export const GAME_CONSTANTS = {
   PARTICLE_LIFETIME_DECREMENT: 0.05,
   PARTICLE_GLITTER_COLOR: 'rgba(255, 223, 0, {alpha})',
   PARTICLE_DEFAULT_COLOR: 'rgba(174, 197, 81, {alpha})',
+
+  // --- NOVO: Evento Glitch / Trigger ---
+  EVENT_TRIGGER_MIN_SCORE: 10,      // Score mínimo para spawnar o trigger.png
+  EVENT_TRIGGER_MAX_SCORE: 50,     // Score máximo para spawnar o trigger.png (para testes rápidos, mude para 50 e 100)
 
   // --- NOVO: Pixels Vermelhos (Red Coins) ---
   RED_COIN_SPAWN_CHANCE: 0.30,       // 30% das moedas viram red coins

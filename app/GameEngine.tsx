@@ -1,5 +1,6 @@
 'use client';
 import React, { useRef, useEffect, useState } from 'react';
+import { StorageManager } from '../lib/storage';
 import { supabase } from '../lib/supabase'; // <-- NOVA LINHA
 import { GAME_CONSTANTS } from '../lib/game-engine/constants';
 import { ParticlePool } from '../lib/game-engine/particlePool';
@@ -22,6 +23,8 @@ const GameEngine = () => {
   const [view, setView] = useState<'game' | 'canvas' | 'brecho'>('game');
 
   // --- NOVO: Guest & Auth Session ---
+  const [isAppLoading, setIsAppLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [showGuestModal, setShowGuestModal] = useState(true);
   const [authMode, setAuthMode] = useState<'guest' | 'login' | 'signup'>('login');
   const [guestInputName, setGuestInputName] = useState('');
@@ -89,6 +92,11 @@ const GameEngine = () => {
     setLoadingRanking(true);
     setRankingData([]);
 
+    if (!isOnline) {
+      setLoadingRanking(false);
+      return;
+    }
+
     if (mode === 'babylon') {
       const { data, error } = await supabase.from('players').select('username, babylon_high_score').order('babylon_high_score', { ascending: false, nullsFirst: false }).limit(50);
       if (data) {
@@ -107,6 +115,9 @@ const GameEngine = () => {
     setLoadingRanking(false);
   };
   // -----------------------------
+
+  const [isOnline, setIsOnline] = useState(true);
+  const [pendingSync, setPendingSync] = useState(false);
 
   const [gameState, setGameState] = useState({
     hasStarted: false,
@@ -181,7 +192,20 @@ const GameEngine = () => {
   const coinImageRef = useRef<HTMLImageElement | null>(null);
   const magnetImageRef = useRef<HTMLImageElement | null>(null);
   const redCoinImageRef = useRef<HTMLImageElement | null>(null);
+  const triggerImageRef = useRef<HTMLImageElement | null>(null);
+  const lavaVideoRef = useRef<HTMLVideoElement | null>(null);
   const muralBgCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      const video = document.createElement('video');
+      video.src = '/lava_loop.mp4';
+      video.loop = true;
+      video.muted = true;
+      video.playsInline = true;
+      lavaVideoRef.current = video;
+    }
+  }, []);
 
   // --- Konami Code listener (ativo na vista do canvas) ---
   useEffect(() => {
@@ -203,6 +227,21 @@ const GameEngine = () => {
     window.addEventListener('keydown', handleKonami);
     return () => window.removeEventListener('keydown', handleKonami);
   }, [view]);
+  // -------------------------------------------------------
+
+  // --- Monitor de conectividade ---
+  useEffect(() => {
+    setIsOnline(navigator.onLine);
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
   // -------------------------------------------------------
 
   // --- Fundo animado "Tubo Digital" para o Mural ---
@@ -405,44 +444,65 @@ const GameEngine = () => {
   }, [view]);
 
   useEffect(() => {
-    const initializeSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += Math.floor(Math.random() * 15) + 5;
+      if (progress > 95) progress = 95;
+      setLoadingProgress(progress);
+    }, 200);
 
+    const initializeSession = async () => {
+      const startTime = Date.now();
+
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      let loggedIn = false;
       if (session) {
         const { data: player } = await supabase.from('players').select('*').eq('auth_id', session.user.id).single();
         if (player) {
           guestUserRef.current = player;
           setGuestUser(player);
           pixelsRef.current = player.pixels;
-          localStorage.setItem('pixelArenaHighScore', player.high_score.toString());
-          localStorage.setItem('pixelArenaPixels', player.pixels.toString());
+          StorageManager.setItem('pixelArenaHighScore', player.high_score.toString());
+          StorageManager.setItem('pixelArenaPixels', player.pixels.toString());
           setShowGuestModal(false);
           setGameState(prev => ({ ...prev, highScore: player.high_score }));
-          return;
+          loggedIn = true;
         }
       }
 
-      const savedId = localStorage.getItem('olivGuestId');
-      if (savedId) {
-        const { data } = await supabase.from('players').select('*').eq('id', savedId).single();
-        if (data && !data.auth_id) {
-          guestUserRef.current = data;
-          setGuestUser(data);
-          pixelsRef.current = data.pixels;
-          localStorage.setItem('pixelArenaHighScore', data.high_score.toString());
-          localStorage.setItem('pixelArenaPixels', data.pixels.toString());
-          setShowGuestModal(false);
-          setGameState(prev => ({ ...prev, highScore: data.high_score }));
+      if (!loggedIn) {
+        const savedId = StorageManager.getItem('olivGuestId');
+        if (savedId) {
+          const { data } = await supabase.from('players').select('*').eq('id', savedId).single();
+          if (data && !data.auth_id) {
+            guestUserRef.current = data;
+            setGuestUser(data);
+            pixelsRef.current = data.pixels;
+            StorageManager.setItem('pixelArenaHighScore', data.high_score.toString());
+            StorageManager.setItem('pixelArenaPixels', data.pixels.toString());
+            setShowGuestModal(false);
+            setGameState(prev => ({ ...prev, highScore: data.high_score }));
+          } else {
+            StorageManager.removeItem('olivGuestId');
+            setGuestInputName(generateRandomGuestName());
+          }
         } else {
-          localStorage.removeItem('olivGuestId');
           setGuestInputName(generateRandomGuestName());
         }
-      } else {
-        setGuestInputName(generateRandomGuestName());
       }
 
-      pixelsRef.current = pixelsRef.current || parseInt(localStorage.getItem('pixelArenaPixels') || '0');
+      pixelsRef.current = pixelsRef.current || parseInt(StorageManager.getItem('pixelArenaPixels') || '0');
       setDisplayPixels(pixelsRef.current);
+
+      const elapsed = Date.now() - startTime;
+      const remaining = Math.max(0, 2000 - elapsed);
+      
+      setTimeout(() => {
+        clearInterval(interval);
+        setLoadingProgress(100);
+        setTimeout(() => setIsAppLoading(false), 400);
+      }, remaining);
     };
 
     initializeSession();
@@ -450,7 +510,8 @@ const GameEngine = () => {
     // BUSCA DO SUPABASE (Função assíncrona)
     const fetchGlobalBrands = async () => {
       const { data, error } = await supabase.from('canvas_brands').select('*');
-      if (data) {
+      if (data && data.length > 0) {
+        setIsOnline(true);
         purchasedBrandsRef.current = data;
         setBrandsUI(data);
 
@@ -466,6 +527,30 @@ const GameEngine = () => {
             }
           }
         });
+      } else {
+        setIsOnline(false);
+        // Fallback offline: gera blocos coloridos aleatórios
+        const fallback: CustomBrand[] = [];
+        const colors = ['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7','#ec4899'];
+        const colorNames = ['VERMELHO','LARANJA','VERDE','AZUL','ROXO','ROSA'];
+        const slotIndices = [0,5,10,15,20,25,30,35,40,45,
+                            1,6,11,16,21,26,31,36,41,46,
+                            2,7,12,17,22,27,32,37,42,47];
+        for (let i = 0; i < 12; i++) {
+          const idx = slotIndices[i];
+          const ci = i % colors.length;
+          const cols = 16;
+          const rows = 8;
+          const pixels: string[] = [`META:${cols}:${rows}:0:0`];
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              pixels.push(Math.random() < 0.6 ? colors[ci] : '');
+            }
+          }
+          fallback.push({ id: idx, name: `OFFLINE ${colorNames[ci]}`, color: colors[ci], pixel_data: pixels });
+        }
+        purchasedBrandsRef.current = fallback;
+        setBrandsUI(fallback);
       }
     };
     fetchGlobalBrands(); // Chama a função assim que o jogo carrega
@@ -521,7 +606,7 @@ const GameEngine = () => {
     } else {
       // SE DEU CERTO, aí sim desconta os pixels e atualiza a tela
       pixelsRef.current -= currentCost;
-      localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+      StorageManager.setItem('pixelArenaPixels', pixelsRef.current.toString());
       setDisplayPixels(pixelsRef.current);
       if (guestUserRef.current) {
         supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
@@ -707,6 +792,7 @@ const GameEngine = () => {
     gameAudio.loadSound('break', '/sounds/break.wav');
     gameAudio.loadSound('magnet', '/sounds/ima.wav');
     gameAudio.loadSound('redcoin', '/sounds/redcoin.wav');
+    gameAudio.loadSound('glitch_scene', '/sounds/glitch_scene.wav');
 
     const oliveImg = new Image();
     oliveImg.src = '/images/olive.png';
@@ -732,6 +818,10 @@ const GameEngine = () => {
     redCoinImg.src = '/images/redcoin.png';
     redCoinImageRef.current = redCoinImg;
 
+    const triggerImg = new Image();
+    triggerImg.src = '/images/trigger.png';
+    triggerImageRef.current = triggerImg;
+
     // Pré-carrega TODAS as imagens de skins
     SKINS.forEach(skin => {
       const img = new Image();
@@ -740,11 +830,11 @@ const GameEngine = () => {
     });
 
     // Restaura skins do localStorage
-    const savedOwned = localStorage.getItem('olivOwnedSkins');
+    const savedOwned = StorageManager.getItem('olivOwnedSkins');
     if (savedOwned) {
       try { const parsed = JSON.parse(savedOwned); setOwnedSkins(parsed); } catch { }
     }
-    const savedActive = localStorage.getItem('olivActiveSkin');
+    const savedActive = StorageManager.getItem('olivActiveSkin');
     if (savedActive) {
       setActiveSkinId(savedActive);
       activeSkinRef.current = savedActive;
@@ -819,11 +909,18 @@ const GameEngine = () => {
     let isGameOver = false;
     let isPaused = false;
     let score = 0;
+    let nextTriggerScoreTarget = (GAME_CONSTANTS.EVENT_TRIGGER_MIN_SCORE || 10) + Math.random() * ((GAME_CONSTANTS.EVENT_TRIGGER_MAX_SCORE || 50) - (GAME_CONSTANTS.EVENT_TRIGGER_MIN_SCORE || 10));
     let shakeFrames = 0;
     let gameSpeed = GAME_CONSTANTS.INITIAL_GAME_SPEED;
     let hasBeatenHighScore = false;
     let magnetActiveUntil = 0;
     let heavyGravityUntil = 0; // --- NOVO: Timestamp até quando a gravidade fica 2x (Red Coin debuff)
+    let glitchActiveUntil = 0;
+    let floorIsLavaUntil = 0; // --- NOVO: Anomalia "O chão é lava"
+    let blackoutActiveUntil = 0;
+    let reverseGravityUntil = 0;
+    let gravityWarningUntil = 0;
+    let gravityWarningType: 'none' | 'to_inverted' | 'to_normal' = 'none';
     let countdownUntil = 0;
     let lastParallaxAdId = -1; // Anti-duplicata: rastreia última arte de fundo
     let lastBrandId = -1;      // Anti-duplicata: rastreia última plataforma
@@ -846,7 +943,7 @@ const GameEngine = () => {
     initMatrixDrops(worldWidth, worldHeight);
     // ------------------------------------
 
-    let currentHighScore = parseInt(localStorage.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
+    let currentHighScore = parseInt(StorageManager.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
     setGameState(prev => ({ ...prev, highScore: currentHighScore }));
 
 
@@ -893,14 +990,18 @@ const GameEngine = () => {
       if (Math.floor(score) > currentHighScore) {
         currentHighScore = Math.floor(score);
         if (babylonModeRef.current) {
-          localStorage.setItem(GAME_CONSTANTS.BABYLON_LS_KEY, currentHighScore.toString());
-          if (guestUserRef.current) {
+          StorageManager.setItem(GAME_CONSTANTS.BABYLON_LS_KEY, currentHighScore.toString());
+          if (guestUserRef.current && isOnline) {
             supabase.from('players').update({ babylon_high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+          } else if (guestUserRef.current) {
+            setPendingSync(true);
           }
         } else {
-          localStorage.setItem('pixelArenaHighScore', currentHighScore.toString());
-          if (guestUserRef.current) {
+          StorageManager.setItem('pixelArenaHighScore', currentHighScore.toString());
+          if (guestUserRef.current && isOnline) {
             supabase.from('players').update({ high_score: currentHighScore }).eq('id', guestUserRef.current.id).then();
+          } else if (guestUserRef.current) {
+            setPendingSync(true);
           }
         }
       }
@@ -929,17 +1030,25 @@ const GameEngine = () => {
         isGameOver = false;
         hasStarted = false;
         score = 0;
+        nextTriggerScoreTarget = GAME_CONSTANTS.EVENT_TRIGGER_MIN_SCORE + Math.random() * (GAME_CONSTANTS.EVENT_TRIGGER_MAX_SCORE - GAME_CONSTANTS.EVENT_TRIGGER_MIN_SCORE);
         shakeFrames = 0;
         gameSpeed = babylonModeRef.current ? GAME_CONSTANTS.MAX_GAME_SPEED : 3;
         hasBeatenHighScore = false;
         countdownUntil = Date.now() + 3000;
+        glitchActiveUntil = 0;
+        floorIsLavaUntil = 0;
+        blackoutActiveUntil = 0;
+        reverseGravityUntil = 0;
+        gravityWarningUntil = 0;
+        gravityWarningType = 'none';
+        heavyGravityUntil = 0;
         setGameState(prev => ({ ...prev, gameOver: false, hasStarted: true, score: 0 }));
         window.cancelAnimationFrame(animationFrameId);
         lastFrameTime = performance.now();
         render();
       } else {
         if (countdownUntil > Date.now()) return;
-        player.velocity = player.jumpStrength;
+        player.velocity = reverseGravityUntil > Date.now() ? -player.jumpStrength : player.jumpStrength;
 
         const now = Date.now();
         if (now - lastJumpTime > 80) {
@@ -1004,9 +1113,17 @@ const GameEngine = () => {
           obstacles = [];
           particlePool.clear();
           score = 0;
+          nextTriggerScoreTarget = GAME_CONSTANTS.EVENT_TRIGGER_MIN_SCORE + Math.random() * (GAME_CONSTANTS.EVENT_TRIGGER_MAX_SCORE - GAME_CONSTANTS.EVENT_TRIGGER_MIN_SCORE);
           gameSpeed = babylonModeRef.current ? GAME_CONSTANTS.MAX_GAME_SPEED : 3;
           hasBeatenHighScore = false;
           babylonRestartRef.current = true;
+          glitchActiveUntil = 0;
+          floorIsLavaUntil = 0;
+          blackoutActiveUntil = 0;
+          reverseGravityUntil = 0;
+          gravityWarningUntil = 0;
+          gravityWarningType = 'none';
+          heavyGravityUntil = 0;
           gameAudio.stopMusic();
           setGameState(prev => ({ ...prev, gameOver: false, hasStarted: false, score: 0 }));
         } else if (hasStarted && !isPaused) {
@@ -1023,7 +1140,7 @@ const GameEngine = () => {
       if (babylonRestartRef.current) {
         babylonRestartRef.current = false;
         if (babylonModeRef.current) {
-          currentHighScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
+          currentHighScore = parseInt(StorageManager.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
           setGameState(prev => ({ ...prev, highScore: currentHighScore }));
         }
         if (hasStarted && !isGameOver) {
@@ -1033,6 +1150,7 @@ const GameEngine = () => {
           player.y = Math.min(150, worldHeight / 2);
           player.velocity = 0;
           score = 0;
+          nextTriggerScoreTarget = GAME_CONSTANTS.EVENT_TRIGGER_MIN_SCORE + Math.random() * (GAME_CONSTANTS.EVENT_TRIGGER_MAX_SCORE - GAME_CONSTANTS.EVENT_TRIGGER_MIN_SCORE);
           shakeFrames = 0;
           gameSpeed = GAME_CONSTANTS.MAX_GAME_SPEED;
           hasBeatenHighScore = false;
@@ -1057,6 +1175,10 @@ const GameEngine = () => {
       lastFrameTime = now;
       // ------------------
 
+      // Calculate boundaries
+      const ceilingBound = 40 / mobileScale;
+      const floorBound = worldHeight - (40 / mobileScale);
+
       let isCountingDown = false;
       let countdownSecs = 0;
       if (countdownUntil > Date.now()) {
@@ -1069,12 +1191,30 @@ const GameEngine = () => {
           setGameState(prev => ({ ...prev, hasStarted: true }));
           const musicKey = neoModeRef.current ? 'bgm_matrix' : babylonModeRef.current ? 'bgm_hardmode' : 'bgm';
           gameAudio.playMusic(musicKey);
-          player.velocity = player.jumpStrength;
+          player.velocity = reverseGravityUntil > Date.now() ? -player.jumpStrength : player.jumpStrength;
           gameAudio.play('jump');
         }
       }
 
-      const isPhysicsActive = hasStarted && !isGameOver && !isCountingDown;
+      let isWarningGravity = gravityWarningUntil > Date.now();
+      if (!isWarningGravity && gravityWarningType !== 'none') {
+        if (gravityWarningType === 'to_inverted') {
+          reverseGravityUntil = Date.now() + 15000;
+        } else if (gravityWarningType === 'to_normal') {
+          reverseGravityUntil = 0;
+        }
+        gravityWarningType = 'none';
+      }
+
+      // Prepara o fim da gravidade invertida
+      if (reverseGravityUntil > 0 && reverseGravityUntil <= Date.now() && gravityWarningType === 'none') {
+        gravityWarningUntil = Date.now() + 1000;
+        gravityWarningType = 'to_normal';
+        reverseGravityUntil = Date.now() + 1000; // Mantém invertida durante o aviso
+        isWarningGravity = true;
+      }
+
+      const isPhysicsActive = hasStarted && !isGameOver && !isCountingDown && !isWarningGravity;
 
       ctx.save();
 
@@ -1090,6 +1230,16 @@ const GameEngine = () => {
       }
 
       ctx.clearRect(0, 0, worldWidth, worldHeight);
+
+      // Fundo em vídeo (Lava)
+      if (floorIsLavaUntil > Date.now()) {
+        if (lavaVideoRef.current && lavaVideoRef.current.paused) lavaVideoRef.current.play().catch(() => {});
+        if (lavaVideoRef.current && lavaVideoRef.current.readyState >= 2) {
+          ctx.drawImage(lavaVideoRef.current, 0, 0, worldWidth, worldHeight);
+        }
+      } else {
+        if (lavaVideoRef.current && !lavaVideoRef.current.paused) lavaVideoRef.current.pause();
+      }
 
       // 1. Fundo: modo Matrix (Neo) ou estrelas normais
       if (neoModeRef.current) {
@@ -1142,6 +1292,9 @@ const GameEngine = () => {
         if (ad.x + ad.width < -100) activeParallaxAds.splice(i, 1);
       }
 
+      const CEILING_HEIGHT = 40;
+      const FLOOR_HEIGHT = 40;
+
       // --- RENDERIZA CHÃO E TETO ---
       if (isPhysicsActive) {
         floorScroll -= gameSpeed * dt * 2;
@@ -1155,13 +1308,26 @@ const GameEngine = () => {
       ctx.fillRect(0, CEILING_HEIGHT - 4, canvas.width, 4);
       
       // Chão
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(0, canvas.height - FLOOR_HEIGHT, canvas.width, FLOOR_HEIGHT);
-      ctx.fillStyle = '#333';
-      ctx.fillRect(0, canvas.height - FLOOR_HEIGHT, canvas.width, 6);
+      const isFloorLava = floorIsLavaUntil > Date.now();
+      if (isFloorLava) {
+        const glow = (Math.sin(Date.now() / 150) + 1) / 2;
+        ctx.fillStyle = `rgb(255, ${Math.floor(30 + glow * 60)}, 0)`;
+        ctx.fillRect(0, canvas.height - FLOOR_HEIGHT, canvas.width, FLOOR_HEIGHT);
+        ctx.fillStyle = `rgb(255, ${Math.floor(120 + glow * 80)}, 0)`;
+        ctx.fillRect(0, canvas.height - FLOOR_HEIGHT, canvas.width, 6);
+        ctx.fillStyle = `rgba(255, 255, 0, ${glow})`;
+        for(let x = (floorScroll % 40) - 40; x < canvas.width; x += 40) {
+           ctx.fillRect(x + 10, canvas.height - FLOOR_HEIGHT + 2, 6, 3);
+        }
+      } else {
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, canvas.height - FLOOR_HEIGHT, canvas.width, FLOOR_HEIGHT);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, canvas.height - FLOOR_HEIGHT, canvas.width, 6);
+      }
       
       // Detalhes rolando
-      ctx.fillStyle = '#0a0a0a';
+      ctx.fillStyle = isFloorLava ? 'rgba(200, 0, 0, 0.4)' : '#0a0a0a';
       for(let x = floorScroll; x < canvas.width; x += 40) {
         ctx.fillRect(x, 0, 15, CEILING_HEIGHT);
         ctx.fillRect(x, canvas.height - FLOOR_HEIGHT, 15, FLOOR_HEIGHT);
@@ -1172,11 +1338,14 @@ const GameEngine = () => {
       if (isPhysicsActive) {
         if (heavyGravityUntil > Date.now()) {
           player.velocity += player.gravity * GAME_CONSTANTS.HEAVY_GRAVITY_MULTIPLIER * dt;
+        } else if (reverseGravityUntil > Date.now()) {
+          player.velocity -= player.gravity * dt;
         } else {
           player.velocity += player.gravity * dt;
         }
         player.y += player.velocity;
-        score += 0.05 * dt;
+        const isAnomalyActive = glitchActiveUntil > Date.now() || floorIsLavaUntil > Date.now() || blackoutActiveUntil > Date.now() || reverseGravityUntil > Date.now();
+        score += 0.05 * dt * (isAnomalyActive ? 1.5 : 1.0);
         if (babylonModeRef.current) {
           gameSpeed = GAME_CONSTANTS.MAX_GAME_SPEED;
         } else {
@@ -1283,9 +1452,32 @@ const GameEngine = () => {
         }
       }
 
-      // 4. Verificação de Morte por queda/teto
-      if ((player.y + player.height >= worldHeight || player.y <= 0) && hasStarted) {
-        if (!isGameOver) triggerGameOver();
+      // 4. Verificação de Colisão nas Bordas (Deslize e Morte)
+      if (hasStarted) {
+        const isGravityInverted = reverseGravityUntil > Date.now();
+
+        // Colisão com Teto
+        if (player.y <= ceilingBound) {
+          player.y = ceilingBound;
+          if (player.velocity < 0) player.velocity = 0;
+        }
+
+        // Colisão com Chão
+        const playerCenterX = player.x + player.width / 2;
+        const overLavaPit = obstacles.some(obs => 
+          obs.isLavaPit && playerCenterX > obs.x && playerCenterX < obs.x + obs.width
+        );
+
+        if (player.y + player.height >= floorBound) {
+          if (overLavaPit && !isGravityInverted) { // Só cai se não estiver flutuando/invertido
+             if (player.y + player.height >= worldHeight) {
+               if (!isGameOver) triggerGameOver();
+             }
+          } else {
+            player.y = floorBound - player.height;
+            if (player.velocity > 0) player.velocity = 0;
+          }
+        }
       }
 
       // 5. Renderização da Azeitona (Jogador)
@@ -1309,15 +1501,22 @@ const GameEngine = () => {
         activeOliveImg = skinImagesRef.current[activeSkinRef.current] || oliveImageRef.current;
       }
 
+      ctx.save();
+      if (reverseGravityUntil > Date.now()) {
+        const cx = player.x + player.width / 2;
+        const cy = renderY + player.height / 2;
+        ctx.translate(cx, cy);
+        ctx.scale(1, -1);
+        ctx.translate(-cx, -cy);
+      }
+
       if (activeOliveImg && activeOliveImg.complete) {
         // Tint verde em modo matrix
         if (neoModeRef.current) {
-          ctx.save();
           if (!isMobile) ctx.filter = 'hue-rotate(80deg) saturate(3) brightness(1.2)';
         }
         // Efeito arco-íris na skin rainbow (simplificado no mobile)
         if (!neoModeRef.current && activeSkinRef.current === 'olive_rainbow') {
-          ctx.save();
           if (!isMobile) {
             const hue = (Date.now() / 10) % 360;
             ctx.filter = `hue-rotate(${hue}deg) saturate(1.5) brightness(1.1)`;
@@ -1328,11 +1527,11 @@ const GameEngine = () => {
           player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight),
           drawWidth, drawHeight
         );
-        if (neoModeRef.current || activeSkinRef.current === 'olive_rainbow') ctx.restore();
       } else {
         ctx.fillStyle = neoModeRef.current ? '#00ff46' : 'white';
         ctx.fillRect(player.x + (player.width - drawWidth) / 2, renderY + (player.height - drawHeight), drawWidth, drawHeight);
       }
+      ctx.restore();
 
       if (heavyGravityUntil > Date.now()) {
         ctx.fillStyle = 'rgba(255, 0, 0, 0.25)';
@@ -1372,7 +1571,7 @@ const GameEngine = () => {
       for (let i = obstacles.length - 1; i >= 0; i--) {
         let obs = obstacles[i];
         if (isPhysicsActive) {
-          if (!obs.isBrand && !obs.isTrampoline && !obs.isMagnet && Date.now() < magnetActiveUntil) {
+          if (!obs.isBrand && !obs.isTrampoline && !obs.isMagnet && !obs.isEventTrigger && !obs.isLavaPit && !obs.isMiniBarricade && Date.now() < magnetActiveUntil) {
             const dx = (player.x + player.width / 2) - (obs.x + obs.width / 2);
             const dy = (renderY + player.height / 2) - (obs.y + obs.height / 2);
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1386,19 +1585,25 @@ const GameEngine = () => {
             obs.x -= gameSpeed * dt;
           }
 
-          // Movimento babilônico de plataformas
-          if (babylonModeRef.current && obs.isBrand && obs.moveAmplitude > 0) {
+          // Movimento babilônico de plataformas ou Anomalia Glitch
+          if ((babylonModeRef.current || glitchActiveUntil > Date.now()) && obs.isBrand && obs.moveAmplitude > 0) {
             if (obs.moveType === 'lateral') {
               obs.x += Math.sin(Date.now() * 0.002 + obs.movePhase) * obs.moveAmplitude * 0.5;
             } else if (obs.moveType === 'vertical' && obs.origY !== undefined) {
-              const elapsed = (Date.now() - obs.movePhase) / 1000;
-              const cycle = 2.6;
-              const t = elapsed % cycle;
-              let offset = 0;
-              if (t < 1) offset = (t / 1) * obs.moveAmplitude;
-              else if (t < 1.3) offset = obs.moveAmplitude;
-              else if (t < 2.3) offset = obs.moveAmplitude * (1 - (t - 1.3) / 1);
-              obs.y = obs.origY + offset;
+              if (glitchActiveUntil > Date.now()) {
+                // Glitch move lentamente
+                const elapsed = (Date.now() - obs.movePhase) / 1000;
+                obs.y = obs.origY + Math.sin(elapsed * 1.5) * 15;
+              } else {
+                const elapsed = (Date.now() - obs.movePhase) / 1000;
+                const cycle = 2.6;
+                const t = elapsed % cycle;
+                let offset = 0;
+                if (t < 1) offset = (t / 1) * obs.moveAmplitude;
+                else if (t < 1.3) offset = obs.moveAmplitude;
+                else if (t < 2.3) offset = obs.moveAmplitude * (1 - (t - 1.3) / 1);
+                obs.y = obs.origY + offset;
+              }
             }
           }
         }
@@ -1473,11 +1678,14 @@ const GameEngine = () => {
             const spikeBright = 0.6 + Math.sin(Date.now() / 150) * 0.4;
             ctx.fillStyle = `rgba(255, ${Math.floor(60 * spikeBright)}, ${Math.floor(30 * spikeBright)}, ${spikeBright})`;
             for (const zone of obs.spikeZones) {
+              const isGravityInverted = reverseGravityUntil > Date.now();
+              const baseTrapY = isGravityInverted ? obs.y + obs.height : obs.y;
+              const spikeTipY = isGravityInverted ? baseTrapY + GAME_CONSTANTS.SPIKE_HEIGHT : baseTrapY - GAME_CONSTANTS.SPIKE_HEIGHT;
               ctx.beginPath();
               for (let sx = obs.x + zone.start; sx < obs.x + zone.end; sx += 4) {
-                ctx.moveTo(sx, obs.y);
-                ctx.lineTo(sx + 2, obs.y - GAME_CONSTANTS.SPIKE_HEIGHT);
-                ctx.lineTo(sx + 4, obs.y);
+                ctx.moveTo(sx, baseTrapY);
+                ctx.lineTo(sx + 2, spikeTipY);
+                ctx.lineTo(sx + 4, baseTrapY);
               }
               ctx.fill();
             }
@@ -1488,8 +1696,21 @@ const GameEngine = () => {
           if (babylonFlicker < 1) ctx.globalAlpha = babylonFlicker;
           // Apenas renderiza itens que não são baseados em grade
           if (!obs.isBrand) {
-            if (obs.isLava || obs.isCone || obs.isAdSign) {
-              if (obs.isLava) {
+            if (obs.isLava || obs.isCone || obs.isAdSign || obs.isEventTrigger || obs.isLavaPit || obs.isMiniBarricade) {
+              if (obs.isLavaPit) {
+                const glow = (Math.sin(Date.now() / 150) + 1) / 2;
+                ctx.fillStyle = `rgb(255, ${Math.floor(30 + glow * 60)}, 0)`;
+                ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                ctx.fillStyle = `rgb(255, ${Math.floor(120 + glow * 80)}, 0)`;
+                ctx.fillRect(obs.x + 5, obs.y + 5 + (glow * 2), obs.width - 10, obs.height - 5 - (glow * 2));
+              } else if (obs.isMiniBarricade) {
+                ctx.fillStyle = '#b91c1c';
+                ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                ctx.fillStyle = '#ef4444';
+                for(let sy = obs.y; sy < obs.y + obs.height; sy += 10) {
+                   ctx.fillRect(obs.x, sy, obs.width, 5);
+                }
+              } else if (obs.isLava) {
                 const glow = (Math.sin(Date.now() / 150) + 1) / 2; // 0 to 1
                 
                 // Outer block (pulses from red to dark orange)
@@ -1521,6 +1742,44 @@ const GameEngine = () => {
                 ctx.fillRect(obs.x, obs.y + 10, obs.width, obs.height - 10); // Placa
                 ctx.fillStyle = (Math.floor(Date.now() / 400) % 2 === 0) ? '#ff0055' : '#00ffff';
                 ctx.fillRect(obs.x + 2, obs.y + 12, obs.width - 4, obs.height - 14); // Neon
+              } else if (obs.isEventTrigger) {
+                // Pixel art de Ponto de Interrogação giratório e arco-íris
+                const qm = [
+                  [0,1,1,1,0],
+                  [1,0,0,0,1],
+                  [0,0,0,1,0],
+                  [0,0,1,0,0],
+                  [0,1,0,0,0],
+                  [0,0,0,0,0],
+                  [0,1,0,0,0]
+                ];
+                
+                const hue = (Date.now() / 3) % 360;
+                ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+                
+                const scale = 5;
+                const w = 5 * scale;
+                const h = 7 * scale;
+                const offsetY = Math.floor(obs.y + (obs.height / 2) - (h / 2) + Math.sin(Date.now() / 150) * 3);
+                
+                const frame = Math.floor(Date.now() / 150) % 4; 
+                let pixelWidth = scale;
+                let isFlipped = false;
+                
+                if (frame === 1 || frame === 3) pixelWidth = Math.max(1, scale / 2);
+                if (frame === 2 || frame === 3) isFlipped = true;
+
+                const actualW = 5 * pixelWidth;
+                const offsetX = obs.x + (obs.width / 2) - (actualW / 2);
+
+                for (let r = 0; r < 7; r++) {
+                  for (let c = 0; c < 5; c++) {
+                    const actualC = isFlipped ? (4 - c) : c;
+                    if (qm[r][actualC]) {
+                      ctx.fillRect(offsetX + c * pixelWidth, offsetY + r * scale, pixelWidth, scale);
+                    }
+                  }
+                }
               }
             } else {
               const imgRef = obs.isMagnet ? magnetImageRef : obs.isRedCoin ? redCoinImageRef : coinImageRef;
@@ -1618,11 +1877,18 @@ const GameEngine = () => {
           ctx.fillStyle = 'white';
           ctx.font = '12px Arial';
           ctx.fillText(obs.name, obs.x + 5, obs.y - 5);
+          
+          if (floorIsLavaUntil > Date.now()) {
+            const isGravityInverted = reverseGravityUntil > Date.now();
+            const lavaY = isGravityInverted ? obs.y + obs.height - 8 : obs.y;
+            ctx.fillStyle = `rgba(255, 60, 0, ${0.6 + Math.sin(Date.now() / 150) * 0.4})`;
+            ctx.fillRect(obs.x, lavaY, obs.width, 8);
+          }
         }
 
         // Colisão
         if (isPhysicsActive && PhysicsEngine.checkCollision({ x: player.x, y: renderY, width: player.width, height: player.height }, obs)) {
-          if (obs.isLava || obs.isCone || obs.isAdSign) {
+          if (obs.isLava || obs.isCone || obs.isAdSign || obs.isLavaPit || obs.isMiniBarricade) {
             if (neoModeRef.current && neoExtraLifeRef.current > 0) {
               neoExtraLifeRef.current = 0;
               player.y = Math.min(150, canvas.height / 2);
@@ -1639,7 +1905,18 @@ const GameEngine = () => {
             break;
           }
           if (obs.isBrand) {
-            if (player.velocity > 0 && player.y + player.height - player.velocity <= obs.y + 10) {
+            const isGravityInverted = reverseGravityUntil > Date.now();
+            const isFalling = isGravityInverted ? player.velocity < 0 : player.velocity > 0;
+            const hitPlatform = isGravityInverted 
+              ? (player.y - player.velocity >= obs.y + obs.height - 10) 
+              : (player.y + player.height - player.velocity <= obs.y + 10);
+
+            if (isFalling && hitPlatform) {
+              if (floorIsLavaUntil > Date.now()) {
+                triggerGameOver();
+                break;
+              }
+
               if (obs.hasSpikes && obs.spikeZones) {
                 const playerCenterX = player.x + player.width / 2;
                 const landedOnSpike = obs.spikeZones.some(
@@ -1650,7 +1927,7 @@ const GameEngine = () => {
                   break;
                 }
               }
-              player.y = obs.y - player.height;
+              player.y = isGravityInverted ? obs.y + obs.height : obs.y - player.height;
               player.velocity = 0;
 
               if (obs.isBouncy) {
@@ -1689,7 +1966,47 @@ const GameEngine = () => {
           } else {
             obstacles.splice(i, 1);
 
-            if (obs.isMagnet) {
+            if (obs.isEventTrigger) {
+              for (let j = 0; j < 30; j++) {
+                particlePool.spawn(
+                  obs.x + obs.width / 2, obs.y + obs.height / 2,
+                  (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10,
+                  2.0, false, 'rgba(255, 0, 255, ALPHA)'
+                );
+              }
+              shakeFrames = 40;
+              score += 100;
+              
+              // Sorteia 1 de 4 anomalias
+              const rand = Math.floor(Math.random() * 4);
+              if (rand === 0) {
+                // Anomalia 1: O Apagão (Blackout)
+                blackoutActiveUntil = Date.now() + 15000;
+                gameAudio.play('glitch_scene');
+              } else if (rand === 1) {
+                // Anomalia 2: Inversão de Polaridade (Reverse Gravity)
+                gravityWarningUntil = Date.now() + 1000;
+                gravityWarningType = 'to_inverted';
+                gameAudio.play('glitch_scene');
+              } else if (rand === 2) {
+                // Anomalia 3: O Chão é Lava
+                floorIsLavaUntil = Date.now() + 15000;
+                gameAudio.play('glitch_scene');
+              } else {
+                // Anomalia 4: Inversão Visual e Dinâmica (Glitch)
+                glitchActiveUntil = Date.now() + 15000;
+                gameAudio.play('glitch_scene');
+                // Perturba todas as plataformas existentes
+                for (let ob of obstacles) {
+                  if (ob.isBrand) {
+                    ob.origY = ob.origY || ob.y;
+                    ob.moveType = 'vertical';
+                    ob.movePhase = Date.now() + Math.random() * 1000;
+                    ob.moveAmplitude = 25;
+                  }
+                }
+              }
+            } else if (obs.isMagnet) {
               for (let j = 0; j < 10; j++) {
                 particlePool.spawn(
                   obs.x + obs.width / 2, obs.y + obs.height / 2,
@@ -1720,7 +2037,7 @@ const GameEngine = () => {
               }
               gameAudio.play('coin');
               pixelsRef.current += GAME_CONSTANTS.BAIT_COIN_VALUE;
-              localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+              StorageManager.setItem('pixelArenaPixels', pixelsRef.current.toString());
               setDisplayPixels(pixelsRef.current);
               if (guestUserRef.current) {
                 supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
@@ -1736,7 +2053,7 @@ const GameEngine = () => {
               }
               gameAudio.play('coin');
               pixelsRef.current += 1;
-              localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+              StorageManager.setItem('pixelArenaPixels', pixelsRef.current.toString());
               if (pixelsRef.current % 5 === 0) {
                 setDisplayPixels(pixelsRef.current);
                 if (guestUserRef.current) {
@@ -1756,17 +2073,25 @@ const GameEngine = () => {
 
       // 8. Geração de novos obstáculos dinâmicos
       if (isPhysicsActive && (obstacles.length === 0 || obstacles[obstacles.length - 1].x < worldWidth - 250)) {
-        const isBrand = Math.random() > 0.45; // 55% chance de plataforma (antes era 40%)
+        const randType = Math.random();
+        let isLavaPit = false;
+        let isMiniBarricade = false;
+        let isBrand = false;
 
-        // Filtra só as marcas que SÃO plataformas físicas (array de pixels com mais de 1 elemento)
+        if (randType < 0.15) {
+          isLavaPit = true;
+        } else if (randType < 0.30) {
+          isMiniBarricade = true;
+        } else if (randType < 0.85) {
+          isBrand = true;
+        }
+
         const obstacleBrands = purchasedBrandsRef.current.filter(b => b.pixel_data && b.pixel_data.length > 1);
-        // Round-robin: evita repetir a mesma plataforma consecutivamente
         let brand: typeof obstacleBrands[0] | null = null;
         if (isBrand && obstacleBrands.length > 0) {
           if (obstacleBrands.length === 1) {
             brand = obstacleBrands[0];
           } else {
-            // Pega uma diferente da última
             let idx = Math.floor(Math.random() * obstacleBrands.length);
             if (obstacleBrands[idx].id === lastBrandId) {
               idx = (idx + 1) % obstacleBrands.length;
@@ -1774,6 +2099,8 @@ const GameEngine = () => {
             brand = obstacleBrands[idx];
             lastBrandId = brand.id;
           }
+        } else if (isBrand && obstacleBrands.length === 0) {
+           isBrand = false;
         }
 
         let rows = 8;
@@ -1784,7 +2111,6 @@ const GameEngine = () => {
           const parts = brand.pixel_data[0].split(':');
           cols = parseInt(parts[1]);
           rows = parseInt(parts[2]);
-
           isBreakable = Math.random() < 0.15;
           isBouncy = !isBreakable && Math.random() < 0.05;
         }
@@ -1804,25 +2130,61 @@ const GameEngine = () => {
           }
         }
 
-        const yPos = brand
-          ? Math.random() * (worldHeight - brandHeight - 40) + 40
-          : Math.random() * (worldHeight - 40);
+        let yPos = 0;
+        let obsWidth = brandWidth;
+        let obsHeight = brand ? brandHeight : 20;
+
+        if (isLavaPit) {
+           obsWidth = 80 + Math.random() * 80;
+           obsHeight = 40 / mobileScale;
+           yPos = floorBound;
+        } else if (isMiniBarricade) {
+           obsWidth = 15;
+           obsHeight = 40 + Math.random() * 40;
+           const isOnCeiling = Math.random() < 0.5;
+           yPos = isOnCeiling ? ceilingBound : floorBound - obsHeight;
+        } else if (brand) {
+           const anchorRand = Math.random();
+           if (anchorRand < 0.15) {
+              yPos = floorBound - brandHeight;
+           } else if (anchorRand < 0.30) {
+              yPos = ceilingBound;
+           } else {
+              yPos = Math.random() * (floorBound - ceilingBound - brandHeight) + ceilingBound;
+           }
+        } else {
+           yPos = Math.random() * (floorBound - ceilingBound - 20) + ceilingBound;
+        }
+
+        let willBeTrigger = false;
+        const target = nextTriggerScoreTarget || 50;
+        const isAnomalyActive = glitchActiveUntil > Date.now() || floorIsLavaUntil > Date.now() || blackoutActiveUntil > Date.now() || reverseGravityUntil > Date.now();
+        if (!isBrand && !isLavaPit && !isMiniBarricade && score >= target && !isAnomalyActive) {
+          willBeTrigger = true;
+          const min = GAME_CONSTANTS.EVENT_TRIGGER_MIN_SCORE || 10;
+          const max = GAME_CONSTANTS.EVENT_TRIGGER_MAX_SCORE || 50;
+          nextTriggerScoreTarget = score + min + Math.random() * (max - min);
+          console.log("SPAWNED TRIGGER! Next target:", Math.floor(nextTriggerScoreTarget));
+        }
 
         obstacles.push({
           x: worldWidth + 100,
           y: yPos,
-          width: brandWidth,
-          height: brand ? brandHeight : 20,
-          color: brand ? brand.color : '#f59e0b',
+          width: obsWidth,
+          height: obsHeight,
+          color: brand ? brand.color : (isLavaPit ? 'transparent' : (isMiniBarricade ? '#b91c1c' : '#f59e0b')),
           isBrand: !!brand,
-          name: brand?.name || 'MOEDA',
+          name: brand?.name || (isLavaPit ? 'LAVA_PIT' : (isMiniBarricade ? 'BARRICADE' : 'MOEDA')),
           pixel_data: brand?.pixel_data,
-          isMagnet: !brand && Math.random() < (babylonModeRef.current ? 0 : 0.1), // Sem ímãs no Babylon
-          isRedCoin: !brand && Math.random() < (babylonModeRef.current ? GAME_CONSTANTS.BABYLON_RED_COIN_CHANCE : 0.15), // 15% normal, 60% Babylon
+          isMagnet: !brand && !isLavaPit && !isMiniBarricade && !willBeTrigger && Math.random() < (babylonModeRef.current ? 0 : 0.1),
+          isRedCoin: !brand && !isLavaPit && !isMiniBarricade && !willBeTrigger && Math.random() < (babylonModeRef.current ? GAME_CONSTANTS.BABYLON_RED_COIN_CHANCE : 0.15),
+          isEventTrigger: willBeTrigger,
+          isLavaPit: isLavaPit,
+          isMiniBarricade: isMiniBarricade,
           origY: brand ? yPos : undefined,
-          moveType: brand && babylonModeRef.current ? (() => { const r = Math.random(); return r < 0.33 ? 'none' : r < 0.66 ? 'lateral' : 'vertical'; })() : 'none',
+          moveType: brand ? (glitchActiveUntil > Date.now() ? 'vertical' : (babylonModeRef.current ? (() => { const r = Math.random(); return r < 0.33 ? 'none' : r < 0.66 ? 'lateral' : 'vertical'; })() : 'none')) : 'none',
           movePhase: brand ? Date.now() + Math.random() * 2000 : 0,
-          moveAmplitude: babylonModeRef.current && brand ? 10 + Math.random() * 15 : 0,
+          moveAmplitude: brand ? (glitchActiveUntil > Date.now() ? 25 : (babylonModeRef.current ? 10 + Math.random() * 15 : 0)) : 0,
           isBaitCoin: false,
           hasSpikes: hasSpikes,
           spikeZones: hasSpikes ? spikeZones : undefined,
@@ -1837,7 +2199,7 @@ const GameEngine = () => {
             ? worldWidth + 100 + Math.random() * 100
             : worldWidth + 80; // Encostada na lateral esquerda da plataforma (sem ficar dentro)
           const baitY = isOnCeiling
-            ? 5 // Quase no teto (zona mortal)
+            ? ceilingBound + 5
             : yPos + brandHeight / 2; // Meio da altura da plataforma
 
           obstacles.push({
@@ -1858,6 +2220,68 @@ const GameEngine = () => {
             isBouncy: false
           });
         }
+      }
+
+      if (glitchActiveUntil > Date.now()) {
+        ctx.globalCompositeOperation = 'difference';
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, worldWidth, worldHeight);
+        ctx.globalCompositeOperation = 'source-over';
+        if (Math.random() < 0.3) {
+            ctx.fillStyle = `rgba(${Math.random() > 0.5 ? 255 : 0}, ${Math.random() > 0.5 ? 255 : 0}, ${Math.random() > 0.5 ? 255 : 0}, 0.3)`;
+            ctx.fillRect(0, 0, worldWidth, worldHeight);
+        }
+      }
+
+      if (blackoutActiveUntil > Date.now()) {
+        if (!(window as any).blackoutCanvas) {
+           (window as any).blackoutCanvas = document.createElement('canvas');
+        }
+        const bCanvas = (window as any).blackoutCanvas;
+        if (bCanvas.width !== canvas.width) bCanvas.width = canvas.width;
+        if (bCanvas.height !== canvas.height) bCanvas.height = canvas.height;
+        
+        const bCtx = bCanvas.getContext('2d');
+        if (bCtx) {
+           // Fundo escuro total
+           bCtx.globalCompositeOperation = 'source-over';
+           bCtx.fillStyle = 'rgba(0, 0, 0, 0.98)';
+           bCtx.fillRect(0, 0, bCanvas.width, bCanvas.height);
+
+           // Corta a luz (destination-out)
+           bCtx.globalCompositeOperation = 'destination-out';
+           
+           const cx = player.x + player.width / 2;
+           const cy = renderY + player.height / 2;
+
+           // Luz ao redor do player
+           const radialGrad = bCtx.createRadialGradient(cx, cy, 10, cx, cy, 130);
+           radialGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+           radialGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+           bCtx.fillStyle = radialGrad;
+           bCtx.beginPath();
+           bCtx.arc(cx, cy, 130, 0, Math.PI * 2);
+           bCtx.fill();
+
+           // Farol para frente
+           const coneLength = 300;
+           const coneWidth = 180;
+           const coneGrad = bCtx.createLinearGradient(cx, cy, cx + coneLength, cy);
+           coneGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+           coneGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+           bCtx.fillStyle = coneGrad;
+           bCtx.beginPath();
+           bCtx.moveTo(cx, cy);
+           bCtx.lineTo(cx + coneLength, cy - coneWidth / 2);
+           bCtx.lineTo(cx + coneLength, cy + coneWidth / 2);
+           bCtx.closePath();
+           bCtx.fill();
+
+           // Desenha o canvas de apagão sobre o canvas principal
+           ctx.save();
+           ctx.globalCompositeOperation = 'source-over';
+           ctx.drawImage(bCanvas, 0, 0);
+           ctx.restore();
         }
       }
 
@@ -1869,6 +2293,18 @@ const GameEngine = () => {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(countdownSecs.toString(), worldWidth / 2, worldHeight / 2);
+      } else if (gravityWarningUntil > Date.now()) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(0, 0, worldWidth, worldHeight);
+        ctx.fillStyle = '#ff3366';
+        ctx.font = 'bold 40px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const blink = Math.floor(Date.now() / 150) % 2 === 0;
+        if (blink) {
+           const msg = gravityWarningType === 'to_inverted' ? '↑ GRAVIDADE INVERTENDO ↑' : '↓ GRAVIDADE NORMALIZANDO ↓';
+           ctx.fillText(msg, worldWidth / 2, worldHeight / 2);
+        }
       }
 
       ctx.restore();
@@ -1896,7 +2332,7 @@ const GameEngine = () => {
     const finalName = guestInputName.trim() || generateRandomGuestName();
     const { data, error } = await supabase.from('players').insert([{ username: finalName, pixels: pixelsRef.current, high_score: gameState.highScore }]).select('*').single();
     if (data) {
-      localStorage.setItem('olivGuestId', data.id);
+      StorageManager.setItem('olivGuestId', data.id);
       guestUserRef.current = data;
       setGuestUser(data);
       setShowGuestModal(false);
@@ -1936,7 +2372,7 @@ const GameEngine = () => {
         }
       }
 
-      const savedId = localStorage.getItem('olivGuestId');
+      const savedId = StorageManager.getItem('olivGuestId');
       if (savedId) {
         // Vincula a conta existente ao auth
         const usernameToUse = signUpUsername.trim() || cleanEmail.split('@')[0].substring(0, 15).toUpperCase();
@@ -1997,7 +2433,7 @@ const GameEngine = () => {
           await supabase.from('players').update({ high_score: mergedHighScore, pixels: mergedPixels }).eq('id', existingPlayer.id);
           // Deleta o perfil de convidado se existir
           if (savedId) await supabase.from('players').delete().eq('id', savedId);
-          localStorage.removeItem('olivGuestId');
+          StorageManager.removeItem('olivGuestId');
           guestUserRef.current = { ...existingPlayer, high_score: mergedHighScore, pixels: mergedPixels };
           setGuestUser(guestUserRef.current as any);
           pixelsRef.current = mergedPixels;
@@ -2041,8 +2477,8 @@ const GameEngine = () => {
         pixelsRef.current = player.pixels;
         setDisplayPixels(player.pixels);
         setGameState(prev => ({ ...prev, highScore: player.high_score }));
-        localStorage.setItem('pixelArenaHighScore', player.high_score.toString());
-        localStorage.setItem('pixelArenaPixels', player.pixels.toString());
+        StorageManager.setItem('pixelArenaHighScore', player.high_score.toString());
+        StorageManager.setItem('pixelArenaPixels', player.pixels.toString());
         setShowGuestModal(false);
       } else {
         // Usuário autenticado mas sem perfil - cria um automaticamente
@@ -2069,9 +2505,9 @@ const GameEngine = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    localStorage.removeItem('olivGuestId');
-    localStorage.removeItem('pixelArenaHighScore');
-    localStorage.removeItem('pixelArenaPixels');
+    StorageManager.removeItem('olivGuestId');
+    StorageManager.removeItem('pixelArenaHighScore');
+    StorageManager.removeItem('pixelArenaPixels');
     guestUserRef.current = null;
     setGuestUser(null);
     pixelsRef.current = 0;
@@ -2100,8 +2536,30 @@ const GameEngine = () => {
     // Transformamos o layout para ser Flex e crescer em toda a tela disponível
     <div className="flex flex-col w-full h-screen bg-black overflow-hidden pt-4 md:pt-6 relative">
 
+      {/* Tela de Loading */}
+      {isAppLoading && (
+        <div className="absolute inset-0 bg-black/95 z-[99999] flex flex-col items-center justify-center p-4">
+          <div className="text-3xl font-black text-[#00ff46] tracking-widest mb-10 uppercase animate-pulse">OLIV</div>
+          <div className="w-64 md:w-96 relative">
+            <div 
+              className="absolute bottom-4 transition-all duration-300 ease-out flex justify-center overflow-hidden"
+              style={{ left: `calc(${loadingProgress}% - 16px)`, width: '32px', height: '32px' }}
+            >
+              <img src="/images/olive.png" alt="Loading Olive" className="h-full max-w-none" style={{ imageRendering: 'pixelated', objectFit: 'none', objectPosition: '0 0' }} />
+            </div>
+            <div className="w-full h-3 bg-gray-900 rounded-full overflow-hidden border border-gray-800">
+              <div 
+                className="h-full bg-[#00ff46] transition-all duration-300 ease-out" 
+                style={{ width: `${loadingProgress}%` }}
+              ></div>
+            </div>
+            <div className="text-xs font-bold text-center mt-3 text-[#00ff46]">Carregando... {loadingProgress}%</div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Convidado */}
-      {showGuestModal && (
+      {!isAppLoading && showGuestModal && (
         <div className="absolute inset-0 bg-black/95 z-[9999] flex items-center justify-center p-4 backdrop-blur-md">
           <div className="bg-gray-900 border border-gray-700 p-8 rounded-xl shadow-[0_0_50px_rgba(59,130,246,0.3)] w-full max-w-sm flex flex-col items-center animate-fade-in">
             <img src="/images/olive.png" alt="OLIV" className="w-20 h-20 mb-4 animate-bounce" style={{ imageRendering: 'pixelated' }} />
@@ -2402,6 +2860,28 @@ const GameEngine = () => {
           )}
         </div>
       )}
+      {!isOnline && (
+        <div className="fixed bottom-4 right-4 z-50 bg-red-900/90 border border-red-500 text-red-300 font-mono text-[10px] px-3 py-1.5 rounded-full shadow-[0_0_15px_rgba(255,0,0,0.3)] flex items-center gap-1.5 pointer-events-none">
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          {pendingSync ? 'OFFLINE · SINC PENDENTE' : 'OFFLINE'}
+        </div>
+      )}
+      {pendingSync && isOnline && (
+        <div className="fixed bottom-4 right-4 z-50 bg-yellow-900/90 border border-yellow-500 text-yellow-300 font-mono text-[10px] px-3 py-1.5 rounded-full shadow-[0_0_15px_rgba(255,200,0,0.3)] cursor-pointer select-none"
+          onClick={() => {
+            if (!guestUserRef.current) return;
+            const hs = parseInt(StorageManager.getItem(babylonModeRef.current ? GAME_CONSTANTS.BABYLON_LS_KEY : 'pixelArenaHighScore') || '0');
+            if (hs > 0) {
+              const col = babylonModeRef.current ? 'babylon_high_score' : 'high_score';
+              supabase.from('players').update({ [col]: hs }).eq('id', guestUserRef.current.id).then(() => setPendingSync(false));
+            } else {
+              setPendingSync(false);
+            }
+          }}
+        >
+          SINC PENDENTE — Toque para enviar
+        </div>
+      )}
       {neoMode && view === 'canvas' && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-black/90 border border-green-500 text-green-400 font-mono text-xs px-4 py-2 rounded-full shadow-[0_0_20px_rgba(0,255,70,0.5)] animate-pulse pointer-events-none">
           &#9672; MODO MATRIX ATIVADO &#9672; VIDA EXTRA ATIVA
@@ -2435,7 +2915,11 @@ const GameEngine = () => {
                       <span className="text-blue-400 font-bold">{player.high_score} pts</span>
                     </div>
                   ))}
-                  {rankingData.length === 0 && <div className="text-center text-gray-500">Nenhum jogador encontrado.</div>}
+                  {rankingData.length === 0 && (
+                    <div className="text-center text-gray-500 py-6">
+                      {!isOnline ? 'Sem conexão. Conecte-se à internet para ver o ranking.' : 'Nenhum jogador encontrado.'}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2521,7 +3005,7 @@ const GameEngine = () => {
                       <span className="text-green-400 text-xs font-bold px-3 py-1.5">✓ Equipada</span>
                     ) : isOwned ? (
                       <button
-                        onClick={() => { setActiveSkinId(skin.id); activeSkinRef.current = skin.id; localStorage.setItem('olivActiveSkin', skin.id); }}
+                        onClick={() => { setActiveSkinId(skin.id); activeSkinRef.current = skin.id; StorageManager.setItem('olivActiveSkin', skin.id); }}
                         className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95"
                       >
                         Equipar
@@ -2532,24 +3016,25 @@ const GameEngine = () => {
                           if (!canAfford) return;
                           pixelsRef.current -= skin.price;
                           setDisplayPixels(pixelsRef.current);
-                          localStorage.setItem('pixelArenaPixels', pixelsRef.current.toString());
+                          StorageManager.setItem('pixelArenaPixels', pixelsRef.current.toString());
                           if (guestUserRef.current) {
                             supabase.from('players').update({ pixels: pixelsRef.current }).eq('id', guestUserRef.current.id).then();
                           }
                           const newOwned = [...ownedSkins, skin.id];
                           setOwnedSkins(newOwned);
-                          localStorage.setItem('olivOwnedSkins', JSON.stringify(newOwned));
+                          StorageManager.setItem('olivOwnedSkins', JSON.stringify(newOwned));
                           setActiveSkinId(skin.id);
                           activeSkinRef.current = skin.id;
-                          localStorage.setItem('olivActiveSkin', skin.id);
+                          StorageManager.setItem('olivActiveSkin', skin.id);
                         }}
-                        disabled={!canAfford}
-                        className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford
+                        disabled={!canAfford || !isOnline}
+                        className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 ${canAfford && isOnline
                           ? 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg shadow-yellow-600/20'
                           : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                           }`}
+                        title={!isOnline ? 'Indisponível offline' : ''}
                       >
-                        Comprar
+                        {!isOnline ? 'Offline' : 'Comprar'}
                       </button>
                     )}
                   </div>
@@ -2748,8 +3233,14 @@ const GameEngine = () => {
 
             <div className="flex justify-between gap-4 p-6 pt-3 shrink-0">
               <button onClick={() => setBuyModalOpen(false)} className="w-1/2 py-2 text-gray-300 hover:text-white border border-gray-600 rounded">Cancelar</button>
-              <button onClick={handleConfirmPurchase} className={`w-1/2 py-2 text-white font-bold rounded shadow-lg ${adType === 'parallax' ? 'bg-purple-600 hover:bg-purple-500 shadow-purple-500/30' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'}`}>
-                Comprar ({adCols * adRows} Px)
+              <button
+                onClick={() => {
+                  if (!isOnline) { alert('Criação indisponível no modo offline.'); return; }
+                  handleConfirmPurchase();
+                }}
+                className={`w-1/2 py-2 text-white font-bold rounded shadow-lg ${adType === 'parallax' ? 'bg-purple-600 hover:bg-purple-500 shadow-purple-500/30' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30'} ${!isOnline ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                {!isOnline ? 'Offline' : `Comprar (${adCols * adRows} Px)`}
               </button>
             </div>
           </div>
@@ -2771,7 +3262,7 @@ const GameEngine = () => {
                 setBabylonMode(next);
                 if (next) {
                   babylonRestartRef.current = true;
-                  const babylonScore = parseInt(localStorage.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
+                  const babylonScore = parseInt(StorageManager.getItem(GAME_CONSTANTS.BABYLON_LS_KEY) || '0');
                   setGameState(prev => ({ ...prev, highScore: babylonScore }));
                 }
                 const musicKey = neoModeRef.current ? 'bgm_matrix' : next ? 'bgm_hardmode' : 'bgm';
@@ -2915,7 +3406,7 @@ const GameEngine = () => {
                 {babylonMode && (
                   <p className="text-red-500 text-xs md:text-sm font-bold mb-1 tracking-[0.2em] animate-pulse">⚡ MODO BABILÔNICO ATIVO ⚡</p>
                 )}
-                <p className="text-gray-300 text-sm md:text-xl mb-8 text-center px-4">Navegue pelo canvas e conquiste território.</p>
+                <p className="text-gray-300 text-sm md:text-xl mb-8 text-center px-4">"Seja a azeitona que nós precisamos, e não a que nós merecemos.</p>
                 <p className="text-white bg-blue-600 px-6 py-3 md:px-8 md:py-4 rounded-full animate-pulse font-bold">
                   TOQUE NA TELA para começar
                 </p>
