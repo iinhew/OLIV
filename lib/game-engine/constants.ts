@@ -48,6 +48,10 @@ export const GAME_CONSTANTS = {
   PARTICLE_GLITTER_COLOR: 'rgba(255, 223, 0, {alpha})',
   PARTICLE_DEFAULT_COLOR: 'rgba(174, 197, 81, {alpha})',
 
+  // --- NOVO: Evento Glitch / Trigger ---
+  EVENT_TRIGGER_MIN_SCORE: 10,      // Score mínimo para spawnar o trigger.png
+  EVENT_TRIGGER_MAX_SCORE: 50,     // Score máximo para spawnar o trigger.png (para testes rápidos, mude para 50 e 100)
+
   // --- NOVO: Pixels Vermelhos (Red Coins) ---
   RED_COIN_SPAWN_CHANCE: 0.30,       // 30% das moedas viram red coins
   HEAVY_GRAVITY_DURATION_MS: 4000,   // 4 segundos de gravidade pesada
